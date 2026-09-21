@@ -1,0 +1,11 @@
+# MuJoCo deployment
+mujoco>=3.0.0,<4.0.0
+
+# Keyboard teleoperation
+pynput>=1.7
+scipy>=1.10
+
+# Configuration / utilities
+pyyaml>=6.0
+psutil>=5.9
+prettytable>=3.0
