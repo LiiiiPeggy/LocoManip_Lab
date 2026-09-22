@@ -112,6 +112,11 @@ Artifacts (each verified by loading/playing it back, not by exit code):
    were still improving slowly at iteration 2 500.
 3. Compare the trained policy against `policy_pretrained.pt` under the same `config_wbc.yaml`.
 4. Decide the fate of the six gitignored `*_base.usd` assets (see PROCESS.md §3).
+5. **New platform**: a port plan for the wheeled `rangerboxcr10lidar` (AgileX Ranger 4WS/4WD +
+   Dobot CR10 + AG95) is written and awaiting review at `docs/plans/plan.md`. It is **not started**:
+   its §9 lists the decisions needed first, and §2.2 records a blocking conflict between the CR10
+   joint limits in `rangercr10lidar.urdf` and those in `agx/TCP-IP-ROS-6AXis/.../cr10_robot.urdf`
+   that must be resolved against the real arm before any training.
 
 ## Known minor documentation drift (verify before editing docs)
 
