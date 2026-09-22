@@ -112,11 +112,15 @@ Artifacts (each verified by loading/playing it back, not by exit code):
    were still improving slowly at iteration 2 500.
 3. Compare the trained policy against `policy_pretrained.pt` under the same `config_wbc.yaml`.
 4. Decide the fate of the six gitignored `*_base.usd` assets (see PROCESS.md §3).
-5. **New platform**: a port plan for the wheeled `rangerboxcr10lidar` (AgileX Ranger 4WS/4WD +
-   Dobot CR10 + AG95) is written and awaiting review at `docs/plans/plan.md`. It is **not started**:
-   its §9 lists the decisions needed first, and §2.2 records a blocking conflict between the CR10
-   joint limits in `rangercr10lidar.urdf` and those in `agx/TCP-IP-ROS-6AXis/.../cr10_robot.urdf`
-   that must be resolved against the real arm before any training.
+5. **New platform**: the port plan for the wheeled `rangerboxcr10lidar` (AgileX Ranger 4WS/4WD +
+   Dobot CR10 + AG95) is at `docs/plans/plan.md`. **All 15 decisions are locked (2026-09-23) and
+   there are no blockers left** — it is ready to start at its stage 0 (URDF→USD conversion), but
+   **no implementation has begun**. Key locked decisions: base stays a `(vx, vy, wz)` command
+   (`/cmd_vel` is the chassis' only input) with arm-only action space; joint limits follow
+   `rangercr10lidar.urdf`; end-effector frame is the gripper fingertip centre; arm actions at 10 Hz
+   on both sides; conservative command ranges (±0.5 m/s, ±0.5 rad/s, no `vy`).
+   Four non-blocking items (its §9 R1–R4) are still open — most notably R1, whether the TCP
+   configured in the Dobot controller actually sits at the fingertip centre.
 
 ## Known minor documentation drift (verify before editing docs)
 
