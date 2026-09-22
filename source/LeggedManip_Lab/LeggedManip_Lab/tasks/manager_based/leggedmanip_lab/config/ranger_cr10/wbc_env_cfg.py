@@ -61,6 +61,9 @@ class RangerActionsCfg:
             (-WHEEL_X, -WHEEL_Y),  # rr
         ],
         wheel_radius=WHEEL_RADIUS,
+        # fr, fl, rl, rr -- the URDF gives fr/rr axis 0 0 1 and fl/rl axis 0 0 -1,
+        # so the two sides need opposite signs to roll the same way.
+        wheel_sign=(-1.0, 1.0, 1.0, -1.0),
         clip=((-0.5, -0.5), (0.5, 0.5)),
     )
 
@@ -154,9 +157,33 @@ class RangerCr10WBCEnvCfg(LeggedManipLabEnvCfg):
         # 10 Hz policy on 200 Hz physics; the shared default is decimation 4 (50 Hz).
         # The base controller holds (vx, wz) across the intervening physics steps.
         self.decimation = 20
+        # keep rendering at the policy rate instead of the shared default of 4
+        self.sim.render_interval = self.decimation
 
         # -- events: rename the bodies that only existed on the quadruped ----------
         self.events.push_robot = None
+
+        # Wheels get their own low, fixed friction, defined after the whole-body
+        # randomisation so it wins.
+        #
+        # Measured: with the shared randomisation (friction up to 1.2) the 176 kg chassis
+        # sank 7 mm into the ground and the resulting contact patch produced a rolling
+        # resistance larger than the wheel drive could supply -- the wheels turned 0.84 rad
+        # and then jammed solid, with 10 Nm applied and no motion. Rolling needs only
+        # enough friction to transmit the drive force: 392 N of thrust over 1727 N of
+        # weight is mu >= 0.23, so 0.35 keeps traction at a fraction of the resistance.
+        self.events.wheel_material = EventTerm(
+            func=mdp.randomize_rigid_body_material,
+            mode="startup",
+            params={
+                "asset_cfg": SceneEntityCfg("robot", body_names=".*_wheel_link"),
+                "static_friction_range": (0.35, 0.35),
+                "dynamic_friction_range": (0.35, 0.35),
+                "restitution_range": (0.0, 0.0),
+                "num_buckets": 1,
+                "make_consistent": True,
+            },
+        )
         self.events.base_com.params["asset_cfg"] = SceneEntityCfg("robot", body_names="base_link")
         self.events.base_external_force_torque.params["asset_cfg"] = SceneEntityCfg("robot", body_names="base_link")
 

@@ -154,7 +154,8 @@ class BaseVelocityAction(ActionTerm):
         speed = torch.sqrt(v_vec_x**2 + v_vec_y**2)
 
         self._steering_target[:] = self.cfg.steering_sign * steer
-        self._wheel_target[:] = self.cfg.wheel_sign * speed / self.cfg.wheel_radius
+        sign = torch.as_tensor(self.cfg.wheel_sign, device=self.device, dtype=torch.float32).reshape(1, -1)
+        self._wheel_target[:] = sign * speed / self.cfg.wheel_radius
 
         # -- write to the articulation ----------------------------------------
         # The articulation's own PD/velocity actuators hold these targets across the
@@ -234,8 +235,15 @@ class BaseVelocityActionCfg(ActionTermCfg):
     steering_sign: float = 1.0
     """Sign relating the URDF steering joint axis to a left-positive steering angle."""
 
-    wheel_sign: float = 1.0
-    """Sign relating the URDF wheel joint axis to forward rolling."""
+    wheel_sign: list[float] | float = 1.0
+    """Per-wheel sign relating the URDF joint axis to forward rolling.
+
+    The URDF is not consistent between sides: ``fr`` and ``rr`` spin about ``0 0 1``
+    while ``fl`` and ``rl`` spin about ``0 0 -1``, so one scalar cannot express it.
+    With a single sign the left and right wheels push in opposite directions and the
+    robot pirouettes instead of driving -- measured: -144 degrees of yaw while
+    commanded straight at 0.3 m/s.
+    """
 
     clip: tuple[tuple[float, float], tuple[float, float]] = ((-0.5, -0.5), (0.5, 0.5))
     """Per-component ``(vx, wz)`` clamp, applied after scaling. Conservative by design."""

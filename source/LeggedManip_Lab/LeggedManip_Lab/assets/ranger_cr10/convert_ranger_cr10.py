@@ -30,6 +30,7 @@ Usage (from the repository root):
 
 from __future__ import annotations
 
+import math
 import os
 
 from isaaclab.app import AppLauncher
@@ -72,17 +73,39 @@ def build_cfg() -> UrdfConverterCfg:
     )
 
 
-def stiffen_mimic_constraints(usd_path: str, natural_frequency: float = 200.0, damping_ratio: float = 1.0) -> int:
-    """Raise the mimic constraint stiffness on the converted USD.
+def fix_mimic_joints(usd_path: str, natural_frequency: float = 200.0, damping_ratio: float = 1.0) -> tuple[int, int]:
+    """Make the AG95's mimic constraints actually work, and stiff enough to hold.
 
-    The importer writes ``naturalFrequency = 25`` with ``dampingRatio = 0.005``, which is
-    far too soft to hold the AG95's parallel linkage: measured on the settled robot, two
-    of the seven mimic joints drifted to 0.72 and 2.79 rad. At 200 Hz / 1.0 they hold to
-    within 0.013 rad. The conversion is re-run from scratch on a fresh clone, so this has
-    to happen here rather than as a one-off edit to the output.
+    Two separate problems, both measured on the settled robot:
+
+    1. **PhysX refuses to apply mimic constraints to joints without finite limits.**
+       ``gripper_finger1_inner_knuckle_joint`` and ``gripper_finger1_finger_tip_joint``
+       come from the URDF as continuous joints, so the importer left their limits
+       infinite and PhysX logs "needs a finite limit set to be used by the mimic joint
+       feature" and skips them. Those two were exactly the ones that drifted, to 0.72
+       and 2.79 rad -- the constraint was absent, not merely soft. Bounds are derived
+       from the mimic relation itself: ``q = gearing * q_ref + offset`` over the driven
+       joint's range, plus a margin.
+
+    2. The importer writes ``naturalFrequency = 25`` with ``dampingRatio = 0.005``,
+       which is too soft for a parallel linkage. Raised to 200 / 1.0.
+
+    The conversion is re-run from scratch on a fresh clone, so both belong here rather
+    than as one-off edits to the output.
     """
     stage = Usd.Stage.Open(usd_path)
-    count = 0
+
+    # the driven joint's range, needed to derive bounds for the mimic joints
+    ref_lo = ref_hi = 0.0
+    ref_prim = stage.GetPrimAtPath(f"{stage.GetDefaultPrim().GetPath()}/joints/gripper_finger1_joint")
+    if ref_prim and ref_prim.IsValid():
+        lo, hi = ref_prim.GetAttribute("physics:lowerLimit"), ref_prim.GetAttribute("physics:upperLimit")
+        if lo and lo.HasValue():
+            ref_lo = lo.Get()
+        if hi and hi.HasValue():
+            ref_hi = hi.Get()
+
+    stiffened = limited = 0
     for prim in stage.Traverse():
         for schema in prim.GetAppliedSchemas():
             if "imic" not in schema:
@@ -90,9 +113,29 @@ def stiffen_mimic_constraints(usd_path: str, natural_frequency: float = 200.0, d
             axis = schema.split(":")[-1]
             prim.GetAttribute(f"physxMimicJoint:{axis}:naturalFrequency").Set(natural_frequency)
             prim.GetAttribute(f"physxMimicJoint:{axis}:dampingRatio").Set(damping_ratio)
-            count += 1
+            stiffened += 1
+
+            # give it a finite range if it has none, or PhysX will ignore the constraint
+            lo_attr, hi_attr = prim.GetAttribute("physics:lowerLimit"), prim.GetAttribute("physics:upperLimit")
+            has_lo = lo_attr and lo_attr.HasValue() and math.isfinite(lo_attr.Get())
+            has_hi = hi_attr and hi_attr.HasValue() and math.isfinite(hi_attr.Get())
+            if has_lo and has_hi:
+                continue
+
+            gearing = prim.GetAttribute(f"physxMimicJoint:{axis}:gearing")
+            offset = prim.GetAttribute(f"physxMimicJoint:{axis}:offset")
+            g = gearing.Get() if gearing and gearing.HasValue() else 1.0
+            o = offset.Get() if offset and offset.HasValue() else 0.0
+            a, b = g * ref_lo + o, g * ref_hi + o
+            margin = 0.1 * abs(b - a)
+            if lo_attr:
+                lo_attr.Set(min(a, b) - margin)
+            if hi_attr:
+                hi_attr.Set(max(a, b) + margin)
+            limited += 1
+
     stage.GetRootLayer().Save()
-    return count
+    return stiffened, limited
 
 
 def print_joint_table(usd_path: str) -> None:
@@ -127,8 +170,11 @@ if __name__ == "__main__":
     print(f"[convert] URDF : {cfg.asset_path}")
     print(f"[convert] USD  : {converter.usd_path}")
 
-    n = stiffen_mimic_constraints(converter.usd_path)
-    print(f"[convert] stiffened {n} mimic constraints to naturalFrequency=200, dampingRatio=1.0")
+    n_stiff, n_limited = fix_mimic_joints(converter.usd_path)
+    print(
+        f"[convert] mimic joints: stiffened {n_stiff} to naturalFrequency=200/dampingRatio=1.0; "
+        f"gave {n_limited} of them finite limits (PhysX ignores mimic constraints on continuous joints)"
+    )
 
     print_joint_table(converter.usd_path)
     simulation_app.close()

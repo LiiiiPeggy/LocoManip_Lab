@@ -87,7 +87,7 @@ ARM_EFFORT_LIMITS_NM = {
 }
 # Wheel torque budget: 176 kg / 4 wheels over a 0.1531 m radius. 1 m/s^2 needs
 # ~6.7 Nm per wheel, so 60 Nm leaves ample margin for turning and slopes.
-WHEEL_EFFORT_LIMIT_NM = 60.0
+WHEEL_EFFORT_LIMIT_NM = 150.0
 
 ##
 # Configuration
@@ -159,7 +159,10 @@ RANGER_CR10_CFG = ArticulationCfg(
             effort_limit=WHEEL_EFFORT_LIMIT_NM,
             velocity_limit=20.0,
             stiffness=0.0,
-            damping=5.0,
+            # 20 gives 39 Nm at the commanded 1.96 rad/s, comfortably above the rolling
+            # resistance the contact patch produces (see the wheel material note in
+            # config/ranger_cr10/wbc_env_cfg.py)
+            damping=20.0,
             armature=0.05,
             friction=0.02,
             min_delay=0,
