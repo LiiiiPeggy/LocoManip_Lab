@@ -6,10 +6,18 @@
 *.mtl filter=lfs diff=lfs merge=lfs -text
 *.obj filter=lfs diff=lfs merge=lfs -text
 *.stl filter=lfs diff=lfs merge=lfs -text
+# gitattributes patterns are case-sensitive: SW2URDF exports .STL in upper case
+*.STL filter=lfs diff=lfs merge=lfs -text
 *.gif filter=lfs diff=lfs merge=lfs -text
 *.mp4 filter=lfs diff=lfs merge=lfs -text
 *.pt filter=lfs diff=lfs merge=lfs -text
 *.jit filter=lfs diff=lfs merge=lfs -text
 *.hdf5 filter=lfs diff=lfs merge=lfs -text
+
+# The rangerboxcr10lidar meshes are deliberately stored as regular Git objects
+# instead of LFS: the package ships its meshes alongside the URDF as one unit, and
+# the whole set (~85 MB, largest 31 MB) stays under GitHub's 100 MB per-file limit.
+# Must come after the *.stl / *.STL rules: the last matching pattern wins.
+rangerboxcr10lidar_description/meshes/** -filter -diff -merge -text
 
 *.bat text eol=crlf

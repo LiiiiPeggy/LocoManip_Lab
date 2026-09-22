@@ -1,0 +1,27 @@
+<package format="2">
+  <!-- ################################ -->
+  <!-- XML: package renamed to rangerboxcr10lidar_description begin -->
+  <!-- ################################ -->
+  <name>rangerboxcr10lidar_description</name>
+  <version>1.0.0</version>
+  <description>
+    <p>URDF Description package for rangerboxcr10lidar_description</p>
+    <p>This package contains configuration data, 3D models and launch files
+for rangerboxcr10lidar_description robot</p>
+  </description>
+  <!-- ################################ -->
+  <!-- XML: package renamed to rangerboxcr10lidar_description end -->
+  <!-- ################################ -->
+  <author>TODO</author>
+  <maintainer email="TODO@email.com" />
+  <license>BSD</license>
+  <buildtool_depend>catkin</buildtool_depend>
+  <depend>roslaunch</depend>
+  <depend>robot_state_publisher</depend>
+  <depend>rviz</depend>
+  <depend>joint_state_publisher_gui</depend>
+  <depend>gazebo</depend>
+  <export>
+    <architecture_independent />
+  </export>
+</package>

@@ -1,0 +1,1183 @@
+<?xml version='1.0' encoding='utf-8'?>
+<!-- ################################ -->
+<!-- XML: robot name lowercased to rangercr10lidar begin -->
+<!-- ################################ -->
+<robot name="rangercr10lidar">
+<!-- ################################ -->
+<!-- XML: robot name lowercased to rangercr10lidar end -->
+<!-- ################################ -->
+  <!-- ################################ -->
+  <!-- XML: Ranger full description begin -->
+  <!-- ################################ -->
+  <link name="base_link">
+    <inertial>
+      <origin xyz="-0.0169024482972742 0.00678181341928169 0.0577617033872562" rpy="0 0 0" />
+      <mass value="88.757612699937" />
+      <inertia ixx="1.71234483232615" ixy="0.0110513757122467" ixz="-0.0193888071078111" iyy="4.90027909719284" iyz="-5.41974668008998E-05" izz="6.3942540769903" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://rangerboxcr10lidar_description/meshes/ranger_meshes/ranger_base_link.STL" />
+      </geometry>
+      <material name="">
+        <color rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://rangerboxcr10lidar_description/meshes/ranger_meshes/ranger_base_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <link name="fr_steering_link">
+    <inertial>
+      <origin xyz="0.0001118 -0.0073218 -0.085228" rpy="0 0 0" />
+      <mass value="2.0957" />
+      <inertia ixx="0.0077827" ixy="1.2908E-08" ixz="7.5611E-07" iyy="0.0012664" iyz="-3.9878E-06" izz="0.0079221" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://rangerboxcr10lidar_description/meshes/ranger_meshes/fr_steering_link.STL" />
+      </geometry>
+      <material name="">
+        <color rgba="0 0 0 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://rangerboxcr10lidar_description/meshes/ranger_meshes/fr_steering_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="fr_steering_joint" type="revolute">
+    <origin xyz="0.445 -0.28 0.0335" rpy="0 0 0" />
+    <parent link="base_link" />
+    <child link="fr_steering_link" />
+    <axis xyz="0 0 -1" />
+    <!-- ################################ -->
+    <!-- XML: steering joint limit -1.57..1.57 rad -->
+    <!-- ################################ -->
+    <limit lower="-1.57" upper="1.57" effort="100" velocity="10" />
+  </joint>
+  <link name="fr_wheel_link">
+    <inertial>
+      <origin xyz="-0.00095113 -1.6964E-07 0.0020954" rpy="0 0 0" />
+      <mass value="11.468" />
+      <inertia ixx="0.05332" ixy="3.0935E-09" ixz="8.2702E-07" iyy="0.080083" iyz="2.1462E-07" izz="0.11423" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://rangerboxcr10lidar_description/meshes/ranger_meshes/fr_wheel_link.STL" />
+      </geometry>
+      <material name="">
+        <color rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://rangerboxcr10lidar_description/meshes/ranger_meshes/fr_wheel_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="fr_wheel_joint" type="continuous">
+    <origin xyz="0 0.001 -0.2918" rpy="1.5708 0 0" />
+    <parent link="fr_steering_link" />
+    <child link="fr_wheel_link" />
+    <axis xyz="0 0 1" />
+  </joint>
+  <link name="fl_steering_wheel_link">
+    <inertial>
+      <origin xyz="0.00010411 0.0077919 -0.086394" rpy="0 0 0" />
+      <mass value="2.1046" />
+      <inertia ixx="0.0077836" ixy="1.5708E-08" ixz="1.3527E-06" iyy="0.0012676" iyz="3.3293E-06" izz="0.007923" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://rangerboxcr10lidar_description/meshes/ranger_meshes/fl_steering_wheel_link.STL" />
+      </geometry>
+      <material name="">
+        <color rgba="0 0 0 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://rangerboxcr10lidar_description/meshes/ranger_meshes/fl_steering_wheel_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="fl_steering_wheel_joint" type="revolute">
+    <origin xyz="0.445 0.28 0.0335" rpy="0 0 0" />
+    <parent link="base_link" />
+    <child link="fl_steering_wheel_link" />
+    <axis xyz="0 0 -1" />
+    <!-- ################################ -->
+    <!-- XML: steering joint limit -1.57..1.57 rad -->
+    <!-- ################################ -->
+    <limit lower="-1.57" upper="1.57" effort="100" velocity="10" />
+  </joint>
+  <link name="fl_wheel_link">
+    <inertial>
+      <origin xyz="0.00031140886112424 -1.6963766547029E-07 -0.00209855961757532" rpy="0 0 0" />
+      <mass value="11.4679471902891" />
+      <inertia ixx="0.0533204704631189" ixy="3.00515938467181E-09" ixz="8.26975779320523E-07" iyy="0.0800825148768417" iyz="2.14912097018666E-07" izz="0.114229464676059" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://rangerboxcr10lidar_description/meshes/ranger_meshes/fl_wheel_link.STL" />
+      </geometry>
+      <material name="">
+        <color rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://rangerboxcr10lidar_description/meshes/ranger_meshes/fl_wheel_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="fl_wheel_joint" type="continuous">
+    <origin xyz="0 -0.001 -0.29345" rpy="1.5708 0 0" />
+    <parent link="fl_steering_wheel_link" />
+    <child link="fl_wheel_link" />
+    <axis xyz="0 0 -1" />
+  </joint>
+  <link name="rl_steering_wheel_link">
+    <inertial>
+      <origin xyz="0.000104728166458012 0.00747335013616163 -0.0851648618324647" rpy="0 0 0" />
+      <mass value="2.09213915941036" />
+      <inertia ixx="0.00778255710444038" ixy="1.57079408079638E-08" ixz="1.35270333030104E-06" iyy="0.00126619444273402" iyz="3.32543440503297E-06" izz="0.00792198479734778" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://rangerboxcr10lidar_description/meshes/ranger_meshes/rl_steering_wheel_link.STL" />
+      </geometry>
+      <material name="">
+        <color rgba="0 0 0 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://rangerboxcr10lidar_description/meshes/ranger_meshes/rl_steering_wheel_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="rl_steering_wheel_joint" type="revolute">
+    <origin xyz="-0.445 0.28 0.0335000000000006" rpy="0 0 0" />
+    <parent link="base_link" />
+    <child link="rl_steering_wheel_link" />
+    <axis xyz="0 0 -1" />
+    <!-- ################################ -->
+    <!-- XML: steering joint limit -1.57..1.57 rad -->
+    <!-- ################################ -->
+    <limit lower="-1.57" upper="1.57" effort="100" velocity="10" />
+  </joint>
+  <link name="rl_wheel_link">
+    <inertial>
+      <origin xyz="0.000311408861124352 -1.69637665525801E-07 -0.00209855961757532" rpy="0 0 0" />
+      <mass value="11.4679471902891" />
+      <inertia ixx="0.0533204704631187" ixy="3.00515931268087E-09" ixz="8.26975779336715E-07" iyy="0.0800825148768415" iyz="2.14912096993789E-07" izz="0.114229464676059" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://rangerboxcr10lidar_description/meshes/ranger_meshes/rl_wheel_link.STL" />
+      </geometry>
+      <material name="">
+        <color rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://rangerboxcr10lidar_description/meshes/ranger_meshes/rl_wheel_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="rl_wheel_joint" type="continuous">
+    <origin xyz="0 -0.001 -0.29345" rpy="1.5708 0 0" />
+    <parent link="rl_steering_wheel_link" />
+    <child link="rl_wheel_link" />
+    <axis xyz="0 0 -1" />
+  </joint>
+  <link name="rr_steering_wheel_link">
+    <inertial>
+      <origin xyz="0.000104728166458012 0.00747335013616163 -0.0851648618324647" rpy="0 0 0" />
+      <mass value="2.09213915941036" />
+      <inertia ixx="0.00778255710444038" ixy="1.57079408079638E-08" ixz="1.35270333030104E-06" iyy="0.00126619444273402" iyz="3.32543440503297E-06" izz="0.00792198479734778" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://rangerboxcr10lidar_description/meshes/ranger_meshes/rr_steering_wheel_link.STL" />
+      </geometry>
+      <material name="">
+        <color rgba="0 0 0 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://rangerboxcr10lidar_description/meshes/ranger_meshes/rr_steering_wheel_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="rr_steering_wheel_joint" type="revolute">
+    <origin xyz="-0.445 -0.28 0.0335000000000006" rpy="0 0 0" />
+    <parent link="base_link" />
+    <child link="rr_steering_wheel_link" />
+    <axis xyz="0 0 -1" />
+    <!-- ################################ -->
+    <!-- XML: steering joint limit -1.57..1.57 rad -->
+    <!-- ################################ -->
+    <limit lower="-1.57" upper="1.57" effort="100" velocity="10" />
+  </joint>
+  <link name="rr_wheel_link">
+    <inertial>
+      <origin xyz="-0.000951130287434154 -1.69637665581313E-07 0.00209543087328679" rpy="0 0 0" />
+      <mass value="11.4679471902891" />
+      <inertia ixx="0.0533204700928865" ixy="3.09346356458604E-09" ixz="8.27015234587234E-07" iyy="0.0800825150191658" iyz="2.14615155034353E-07" izz="0.114229464195811" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://rangerboxcr10lidar_description/meshes/ranger_meshes/rr_wheel_link.STL" />
+      </geometry>
+      <material name="">
+        <color rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://rangerboxcr10lidar_description/meshes/ranger_meshes/rr_wheel_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="rr_wheel_joint" type="continuous">
+    <origin xyz="0 0.001 -0.2918" rpy="1.5708 0 0" />
+    <parent link="rr_steering_wheel_link" />
+    <child link="rr_wheel_link" />
+    <axis xyz="0 0 1" />
+  </joint>
+  <!-- ################################ -->
+  <!-- XML: Ranger full description end -->
+  <!-- ################################ -->
+
+  <!-- ################################ -->
+  <!-- XML: CR10 full description begin -->
+  <!-- ################################ -->
+  <link name="cr10_base_link">
+    <inertial>
+      <origin xyz="-0.0017435 -4.7141E-06 0.032774" rpy="0 0 0" />
+      <mass value="1.8265" />
+      <inertia ixx="0.0041731" ixy="5.9354E-07" ixz="2.52E-05" iyy="0.0043128" iyz="-5.4503E-07" izz="0.0067702" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://rangerboxcr10lidar_description/meshes/cr10_meshes/cr10_base_link.STL" />
+      </geometry>
+      <material name="">
+        <color rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://rangerboxcr10lidar_description/meshes/cr10_meshes/cr10_base_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <link name="cr10_Link1">
+    <inertial>
+      <origin xyz="-1.6635E-06 -0.010819 0.0028389" rpy="0 0 0" />
+      <mass value="4.1649" />
+      <inertia ixx="0.020714" ixy="-1.9343E-07" ixz="1.6036E-07" iyy="0.018824" iyz="-9.6731E-05" izz="0.014575" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://rangerboxcr10lidar_description/meshes/cr10_meshes/Link1.STL" />
+      </geometry>
+      <material name="">
+        <color rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://rangerboxcr10lidar_description/meshes/cr10_meshes/Link1.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="cr10_joint1" type="revolute">
+    <origin xyz="0 0 0.1765" rpy="0 0 0" />
+    <parent link="cr10_base_link" />
+    <child link="cr10_Link1" />
+    <axis xyz="0 0 1" />
+    <!-- ################################ -->
+    <!-- XML: cr10_joint1 limit -3.92..0.94 rad -->
+    <!-- ################################ -->
+    <limit lower="-3.92" upper="0.94" effort="0" velocity="0" />
+  </joint>
+  <link name="cr10_Link2">
+    <inertial>
+      <origin xyz="-0.24631 3.5816E-07 0.19515" rpy="0 0 0" />
+      <mass value="11.314" />
+      <inertia ixx="0.033616" ixy="-8.2998E-07" ixz="-0.0033352" iyy="0.30683" iyz="-6.6457E-08" izz="0.29972" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://rangerboxcr10lidar_description/meshes/cr10_meshes/Link2.STL" />
+      </geometry>
+      <material name="">
+        <color rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://rangerboxcr10lidar_description/meshes/cr10_meshes/Link2.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="cr10_joint2" type="revolute">
+    <origin xyz="0 0 0" rpy="1.5708 1.5708 0" />
+    <parent link="cr10_Link1" />
+    <child link="cr10_Link2" />
+    <axis xyz="0 0 1" />
+    <!-- ################################ -->
+    <!-- XML: cr10_joint2 limit -1.57..1.57 rad -->
+    <!-- ################################ -->
+    <limit lower="-1.57" upper="1.57" effort="0" velocity="0" />
+  </joint>
+  <link name="cr10_Link3">
+    <inertial>
+      <origin xyz="-0.270855859955203 2.5144690851208E-07 0.0622960395387155" rpy="0 0 0" />
+      <mass value="4.89191189064363" />
+      <inertia ixx="0.00715720724136357" ixy="-5.62017408817872E-07" ixz="-0.00257748068989916" iyy="0.239673426443838" iyz="9.26228295895878E-08" izz="0.238369168055991" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://rangerboxcr10lidar_description/meshes/cr10_meshes/Link3.STL" />
+      </geometry>
+      <material name="">
+        <color rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://rangerboxcr10lidar_description/meshes/cr10_meshes/Link3.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="cr10_joint3" type="revolute">
+    <origin xyz="-0.607 0 0" rpy="0 0 0" />
+    <parent link="cr10_Link2" />
+    <child link="cr10_Link3" />
+    <axis xyz="0 0 1" />
+    <!-- ################################ -->
+    <!-- XML: cr10_joint3 limit -2.86..2.86 rad -->
+    <!-- ################################ -->
+    <limit lower="-2.86" upper="2.86" effort="0" velocity="0" />
+  </joint>
+  <link name="cr10_Link4">
+    <inertial>
+      <origin xyz="-2.53137491438456E-07 0.00798724498566683 -0.00589074229668524" rpy="0 0 0" />
+      <mass value="1.16884294495796" />
+      <inertia ixx="0.00292614933092813" ixy="8.20440076221281E-09" ixz="-8.19990423351321E-09" iyy="0.00150052997722543" iyz="-5.4492521866877E-05" izz="0.00273274943535585" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://rangerboxcr10lidar_description/meshes/cr10_meshes/Link4.STL" />
+      </geometry>
+      <material name="">
+        <color rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://rangerboxcr10lidar_description/meshes/cr10_meshes/Link4.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="cr10_joint4" type="revolute">
+    <origin xyz="-0.568 0 0.191" rpy="0 0 -1.5708" />
+    <parent link="cr10_Link3" />
+    <child link="cr10_Link4" />
+    <axis xyz="0 0 1" />
+    <!-- ################################ -->
+    <!-- XML: cr10_joint4 limit -3.14..3.14 rad -->
+    <!-- ################################ -->
+    <limit lower="-3.14" upper="3.14" effort="0" velocity="0" />
+  </joint>
+  <link name="cr10_Link5">
+    <inertial>
+      <origin xyz="5.50699455951951E-07 -0.0145467578029201 -0.00454887087411437" rpy="0 0 0" />
+      <mass value="1.22303084244711" />
+      <inertia ixx="0.00337905462069531" ixy="3.57819902464362E-08" ixz="-7.51828060542842E-09" iyy="0.00149255573951137" iyz="8.41917918947542E-05" izz="0.00323300312341709" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://rangerboxcr10lidar_description/meshes/cr10_meshes/Link5.STL" />
+      </geometry>
+      <material name="">
+        <color rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://rangerboxcr10lidar_description/meshes/cr10_meshes/Link5.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="cr10_joint5" type="revolute">
+    <origin xyz="0 -0.125 0" rpy="1.5708 0 0" />
+    <parent link="cr10_Link4" />
+    <child link="cr10_Link5" />
+    <axis xyz="0 0 1" />
+    <!-- ################################ -->
+    <!-- XML: cr10_joint5 limit -3.14..3.14 rad -->
+    <!-- ################################ -->
+    <limit lower="-3.14" upper="3.14" effort="0" velocity="0" />
+  </joint>
+  <link name="cr10_Link6">
+    <inertial>
+      <origin xyz="1.42987471244488E-10 2.29640694859867E-05 -0.0205297780389956" rpy="0 0 0" />
+      <mass value="0.205439548775225" />
+      <inertia ixx="0.000110115425573789" ixy="-8.21487875808426E-14" ixz="4.28615843947113E-14" iyy="0.000110662465957898" iyz="3.68879932665237E-08" izz="0.00020518429573024" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://rangerboxcr10lidar_description/meshes/cr10_meshes/Link6.STL" />
+      </geometry>
+      <material name="">
+        <color rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://rangerboxcr10lidar_description/meshes/cr10_meshes/Link6.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="cr10_joint6" type="revolute">
+    <origin xyz="0 0.1084 0" rpy="-1.5708 0 0" />
+    <parent link="cr10_Link5" />
+    <child link="cr10_Link6" />
+    <axis xyz="0 0 1" />
+    <!-- ################################ -->
+    <!-- XML: cr10_joint6 limit -3.14..3.14 rad -->
+    <!-- ################################ -->
+    <limit lower="-3.14" upper="3.14" effort="0" velocity="0" />
+  </joint>
+  <joint name="cr10_mount_joint" type="fixed">
+    <origin xyz="0.2462 0 0.1" rpy="0 0 0" />
+    <parent link="base_link" />
+    <child link="cr10_base_link" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <!-- ################################ -->
+  <!-- XML: CR10 full description end -->
+  <!-- ################################ -->
+
+  <!-- ################################ -->
+  <!-- XML: DH Robotics AG95 gripper begin (meshes: meshes/ag95_meshes) -->
+  <!-- ################################ -->
+  <!-- ################################ -->
+  <!-- XML: AG95 mount rpy — 与 cr10_Link6 坐标系同向（原 1.57/0/1.57 为 DH 演示 ee_link，不适用于 CR10 法兰） -->
+  <!-- XML: 若手指朝向仍差 90°/180°，可仅改下一行 rpy，例如 rpy="0 0 3.14159" 或 rpy="0 0 1.5708" -->
+  <!-- ################################ -->
+  <joint name="cr10_Link6_gripper_base_fixed" type="fixed">
+    <origin xyz="0 0 0" rpy="0 0 0" />
+    <parent link="cr10_Link6" />
+    <child link="gripper_base_link" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <link name="gripper_base_link">
+    <!-- ################################ -->
+    <!-- XML: AG95 base mesh uses ag95_base_link.STL -->
+    <!-- ################################ -->
+    <visual>
+        <geometry>
+          <mesh filename="package://rangerboxcr10lidar_description/meshes/ag95_meshes/ag95_base_link.STL"  scale = "0.001 0.001 0.001"/>
+        </geometry>
+    </visual>
+    <collision>
+        <geometry>
+            <mesh filename="package://rangerboxcr10lidar_description/meshes/ag95_meshes/ag95_base_link.STL"  scale = "0.001 0.001 0.001"/>
+        </geometry>
+    </collision>
+    <!-- ################################ -->
+    <!-- XML: AG95 base mesh path end -->
+    <!-- ################################ -->
+        <inertial>
+          <mass value="0.83416" />
+            <origin xyz="0.0 0.0 0.0" />
+              <inertia ixx = "0.0013016" ixy = "-6.9374e-07" ixz = "5.9848e-07"
+                       iyx = "0.000000" iyy = "0.00049972" iyz = "2.0244E-07"
+                       izx = "0.000000" izy = "0.000000" izz = "0.001498" />
+       </inertial>
+    </link>
+  <gazebo reference="gripper_base_link">
+    <implicitSpringDamper>1</implicitSpringDamper>
+    <mu1>100000</mu1>
+    <mu2>100000</mu2>
+    <kp>100000000.0</kp>
+    <kd>1.0</kd>
+  </gazebo>
+  <!-- ################################ -->
+  <!-- XML: Intel RealSense D455（展开自 realsense2_description/urdf/_d455.urdf.xacro，use_nominal_extrinsics=true） -->
+  <!-- XML: d455_joint 的 rpy 须与 test_d455 宏插入块一致用 0/0/0；曾试 1.57/0/1.57 会使整机网格相对夹爪底座错移，易旋进夹爪内部导致 RViz 中「看不见」 -->
+  <!-- XML: 朝向微调请用小角度逐步试 rpy，或优先改 d455_link 内 visual 的 origin（仅改显示会偏离光学 frame，一般改 joint 更一致） -->
+  <!-- XML: 若与壳体未完全贴合，调 d455_joint 的 origin xyz（多为 z） -->
+  <!-- ################################ -->
+  <material name="aluminum">
+    <color rgba="0.5 0.5 0.5 1" />
+  </material>
+  <joint name="d455_joint" type="fixed">
+    <origin xyz="-0.01 -0.06 0.03" rpy="0 -1.57 1.57" />
+    <parent link="gripper_base_link" />
+    <child link="d455_bottom_screw_frame" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <link name="d455_bottom_screw_frame" />
+  <joint name="d455_link_joint" type="fixed">
+    <origin xyz="0.01115 0.0475 0.0145" rpy="0 0 0" />
+    <parent link="d455_bottom_screw_frame" />
+    <child link="d455_link" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <link name="d455_link">
+    <visual>
+      <origin xyz="0.00465 -0.0475 0" rpy="1.5707963267948966 0 1.5707963267948966" />
+      <geometry>
+        <mesh filename="package://rangerboxcr10lidar_description/meshes/realsense_meshes/d455.stl" scale="0.001 0.001 0.001" />
+      </geometry>
+      <material name="aluminum" />
+    </visual>
+    <collision>
+      <origin xyz="-0.00845 -0.0475 0" rpy="0 0 0" />
+      <geometry>
+        <box size="0.026 0.124 0.029" />
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value="0.072" />
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <inertia ixx="0.003881243" ixy="0.0" ixz="0.0" iyy="0.000498940" iyz="0.0" izz="0.003879257" />
+    </inertial>
+  </link>
+  <joint name="d455_depth_joint" type="fixed">
+    <origin xyz="0 0 0" rpy="0 0 0" />
+    <parent link="d455_link" />
+    <child link="d455_depth_frame" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <link name="d455_depth_frame" />
+  <joint name="d455_depth_optical_joint" type="fixed">
+    <origin xyz="0 0 0" rpy="-1.5707963267948966 0 -1.5707963267948966" />
+    <parent link="d455_depth_frame" />
+    <child link="d455_depth_optical_frame" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <link name="d455_depth_optical_frame" />
+  <joint name="d455_infra1_joint" type="fixed">
+    <origin xyz="0 0 0" rpy="0 0 0" />
+    <parent link="d455_link" />
+    <child link="d455_infra1_frame" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <link name="d455_infra1_frame" />
+  <joint name="d455_infra1_optical_joint" type="fixed">
+    <origin xyz="0 0 0" rpy="-1.5707963267948966 0 -1.5707963267948966" />
+    <parent link="d455_infra1_frame" />
+    <child link="d455_infra1_optical_frame" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <link name="d455_infra1_optical_frame" />
+  <joint name="d455_infra2_joint" type="fixed">
+    <origin xyz="0 -0.095 0" rpy="0 0 0" />
+    <parent link="d455_link" />
+    <child link="d455_infra2_frame" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <link name="d455_infra2_frame" />
+  <joint name="d455_infra2_optical_joint" type="fixed">
+    <origin xyz="0 0 0" rpy="-1.5707963267948966 0 -1.5707963267948966" />
+    <parent link="d455_infra2_frame" />
+    <child link="d455_infra2_optical_frame" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <link name="d455_infra2_optical_frame" />
+  <joint name="d455_color_joint" type="fixed">
+    <origin xyz="0 -0.059 0" rpy="0 0 0" />
+    <parent link="d455_link" />
+    <child link="d455_color_frame" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <link name="d455_color_frame" />
+  <joint name="d455_color_optical_joint" type="fixed">
+    <origin xyz="0 0 0" rpy="-1.5707963267948966 0 -1.5707963267948966" />
+    <parent link="d455_color_frame" />
+    <child link="d455_color_optical_frame" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <link name="d455_color_optical_frame" />
+  <link name="d455_accel_frame" />
+  <link name="d455_accel_optical_frame" />
+  <link name="d455_gyro_frame" />
+  <link name="d455_gyro_optical_frame" />
+  <link name="d455_imu_optical_frame" />
+  <joint name="d455_accel_joint" type="fixed">
+    <origin xyz="-0.01602 -0.03022 0.0074" rpy="0 0 0" />
+    <parent link="d455_link" />
+    <child link="d455_accel_frame" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <joint name="d455_accel_optical_joint" type="fixed">
+    <origin xyz="0 0 0" rpy="-1.5707963267948966 0 -1.5707963267948966" />
+    <parent link="d455_accel_frame" />
+    <child link="d455_accel_optical_frame" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <joint name="d455_gyro_joint" type="fixed">
+    <origin xyz="-0.01602 -0.03022 0.0074" rpy="0 0 0" />
+    <parent link="d455_link" />
+    <child link="d455_gyro_frame" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <joint name="d455_gyro_optical_joint" type="fixed">
+    <origin xyz="0 0 0" rpy="-1.5707963267948966 0 -1.5707963267948966" />
+    <parent link="d455_gyro_frame" />
+    <child link="d455_gyro_optical_frame" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <joint name="d455_imu_optical_joint" type="fixed">
+    <origin xyz="0 0 0" rpy="0 0 0" />
+    <parent link="d455_gyro_optical_frame" />
+    <child link="d455_imu_optical_frame" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <!-- ################################ -->
+  <!-- XML: Intel RealSense D455 end -->
+  <!-- ################################ -->
+  <joint name="gripper_finger1_joint" type="revolute">
+    <parent link="gripper_base_link"/>
+    <child link="gripper_finger1_knuckle_link"/>
+      <axis xyz="0 -1 0"/>
+      <origin rpy="0.0 0.0 3.14" xyz="-0.016 0 0.10586"/>
+      <limit lower="0.0" upper="0.6524" velocity="2.0" effort="1000"/>
+  </joint>
+  <joint name="gripper_finger2_joint" type="revolute">
+    <parent link="gripper_base_link"/>
+    <child link="gripper_finger2_knuckle_link"/>
+    <axis xyz="0 -1 0"/>
+    <origin rpy="0.0 0.0 0.0" xyz="0.016  0 0.10586 "/>
+    <limit lower="-3.14" upper="3.14" velocity="100.0" effort="1000"/>
+    <mimic joint="gripper_finger1_joint"/>
+  </joint>
+  <link name="gripper_finger1_knuckle_link">
+            <visual>
+                <geometry>
+                    <mesh filename="package://rangerboxcr10lidar_description/meshes/ag95_meshes/crank_Link.STL"  scale = "0.001 0.001 0.001"/>
+                </geometry>
+            </visual>
+            <collision>
+                <geometry>
+                    <mesh filename="package://rangerboxcr10lidar_description/meshes/ag95_meshes/crank_Link.STL"  scale = "0.001 0.001 0.001"/>
+                </geometry>
+            </collision>
+            <inertial>
+                <mass value="0.011111" />
+                <origin xyz="0.0 0.0 0.0" />
+                <inertia ixx = "3.88172e-06" ixy = "-2.29456e-13" ixz = "8.33e-07"
+                         iyx = "0.000000" iyy = "1.92174e-06" iyz = "2.04435e-13"
+                         izx = "0.000000" izy = "0.000000" izz = "4.32374e-06" />
+            </inertial>
+        </link>
+  <gazebo reference="gripper_finger1_knuckle_link">
+    <implicitSpringDamper>1</implicitSpringDamper>
+    <mu1>100000</mu1>
+    <mu2>100000</mu2>
+    <kp>100000000.0</kp>
+    <kd>1.0</kd>
+  </gazebo>
+  <link name="gripper_finger2_knuckle_link">
+            <visual>
+                <geometry>
+                    <mesh filename="package://rangerboxcr10lidar_description/meshes/ag95_meshes/crank_Link.STL"  scale = "0.001 0.001 0.001"/>
+                </geometry>
+            </visual>
+            <collision>
+                <geometry>
+                    <mesh filename="package://rangerboxcr10lidar_description/meshes/ag95_meshes/crank_Link.STL"  scale = "0.001 0.001 0.001"/>
+                </geometry>
+            </collision>
+            <inertial>
+                <mass value="0.011111" />
+                <origin xyz="0.0 0.0 0.0" />
+                <inertia ixx = "3.88172e-06" ixy = "-2.29456e-13" ixz = "8.33e-07"
+                         iyx = "0.000000" iyy = "1.92174e-06" iyz = "2.04435e-13"
+                         izx = "0.000000" izy = "0.000000" izz = "4.32374e-06" />
+            </inertial>
+        </link>
+  <gazebo reference="gripper_finger2_knuckle_link">
+    <implicitSpringDamper>1</implicitSpringDamper>
+    <mu1>100000</mu1>
+    <mu2>100000</mu2>
+    <kp>100000000.0</kp>
+    <kd>1.0</kd>
+  </gazebo>
+        <joint name="gripper_finger1_finger_joint" type="continuous">
+            <parent link="gripper_finger1_knuckle_link"/>
+            <child link="gripper_finger1_finger_link"/>
+            <axis xyz="0 -1 0"/>
+            <origin xyz="0.0292080077784 0.0 -0.0227132622407" rpy="0 0 0" />
+            <limit lower="-3.14" upper="3.14" velocity="100.0" effort="0.1"/>
+            <mimic joint="gripper_finger1_joint" multiplier="0.4563942" offset="0"/>
+        </joint>
+
+        <joint name="gripper_finger2_finger_joint" type="continuous">
+            <parent link="gripper_finger2_knuckle_link"/>
+            <child link="gripper_finger2_finger_link"/>
+            <axis xyz="0 -1 0"/>
+            <origin xyz="0.0292080077784 0.0 -0.0227132622407" rpy="0 0 0" />
+            <limit lower="-3.14" upper="3.14" velocity="100.0" effort="0.1"/>
+            <mimic joint="gripper_finger1_joint" multiplier="0.4563942" offset="0"/>
+        </joint>
+  <link name="gripper_finger1_finger_link">
+            <visual>
+                <geometry>
+                    <mesh filename="package://rangerboxcr10lidar_description/meshes/ag95_meshes/rod_Link.STL"  scale = "0.001 0.001 0.001"/>
+                </geometry>
+            </visual>
+            <collision>
+                <geometry>
+                    <mesh filename="package://rangerboxcr10lidar_description/meshes/ag95_meshes/rod_Link.STL"  scale = "0.001 0.001 0.001"/>
+                </geometry>
+            </collision>
+            <inertial>
+                <mass value="0.0222871" />
+                <origin xyz="0.0 0.0 0.0" />
+                <inertia ixx = "8.72836e-06" ixy = "7.0843e-15" ixz = "-2.18833e-06"
+                         iyx = "-0.000002" iyy = "7.26157e-06" iyz = "7.6579e-15"
+                         izx = "0.000000" izy = "0.000000" izz = "3.3425e-06" />
+            </inertial>
+        </link>
+  <gazebo reference="gripper_finger1_finger_link">
+    <implicitSpringDamper>1</implicitSpringDamper>
+    <mu1>100000</mu1>
+    <mu2>100000</mu2>
+    <kp>100000000.0</kp>
+    <kd>1.0</kd>
+  </gazebo>
+  <link name="gripper_finger2_finger_link">
+<visual>
+                <geometry>
+                    <mesh filename="package://rangerboxcr10lidar_description/meshes/ag95_meshes/rod_Link.STL"  scale = "0.001 0.001 0.001"/>
+                </geometry>
+            </visual>
+            <collision>
+                <geometry>
+                    <mesh filename="package://rangerboxcr10lidar_description/meshes/ag95_meshes/rod_Link.STL"  scale = "0.001 0.001 0.001"/>
+                </geometry>
+            </collision>
+            <inertial>
+                <mass value="0.0222871" />
+                <origin xyz="0.0 0.0 0.0" />
+                <inertia ixx = "8.72836e-06" ixy = "7.0843e-15" ixz = "-2.18833e-06"
+                         iyx = "-0.000002" iyy = "7.26157e-06" iyz = "7.6579e-15"
+                         izx = "0.000000" izy = "0.000000" izz = "3.3425e-06" />
+            </inertial>
+        </link>
+  <gazebo reference="gripper_finger2_finger_link">
+    <implicitSpringDamper>1</implicitSpringDamper>
+    <mu1>100000</mu1>
+    <mu2>100000</mu2>
+    <kp>100000000.0</kp>
+    <kd>1.0</kd>
+  </gazebo>
+
+  <joint name="gripper_finger1_inner_knuckle_joint" type="continuous">
+    <parent link="gripper_base_link"/>
+    <child link="gripper_finger1_inner_knuckle_link"/>
+            <axis xyz="0 -1 0"/>
+            <origin rpy="0.0 0.0 3.14" xyz="-0.016 0 0.10586"/>
+            <limit lower="-3.14" upper="3.14" velocity="100.0" effort="0.1"/>
+            <mimic joint="gripper_finger1_joint" multiplier="1.49462955"  offset="0"/>
+ </joint>
+  <joint name="gripper_finger2_inner_knuckle_joint" type="continuous">
+    <parent link="gripper_base_link"/>
+    <child link="gripper_finger2_inner_knuckle_link"/>
+            <axis xyz="0 -1 0"/>
+            <origin rpy="0.0 0.0 0.0" xyz="0.016 0 0.10586"/>
+            <limit lower="-3.14" upper="3.14" velocity="100.0" effort="0.1"/>
+            <mimic joint="gripper_finger1_joint" multiplier="1.49462955"  offset="0"/>
+  </joint>
+     <link name="gripper_finger1_inner_knuckle_link">
+            <visual>
+                <geometry>
+                    <mesh filename="package://rangerboxcr10lidar_description/meshes/ag95_meshes/proximal_phalanx_Link.STL"  scale = "0.001 0.001 0.001"/>
+                </geometry>
+            </visual>
+            <collision>
+                <geometry>
+                    <mesh filename="package://rangerboxcr10lidar_description/meshes/ag95_meshes/proximal_phalanx_Link.STL"  scale = "0.001 0.001 0.001"/>
+                </geometry>
+            </collision>
+            <inertial>
+                <mass value="0.0318004" />
+                <origin xyz="0.0 0.0 0.0" />
+                <inertia ixx = "1.39848e-05" ixy = "-9.54763e-15" ixz = "-5.01422e-06"
+                         iyx = "0.000000" iyy = "1.04943e-05" iyz = "8.94585e-16"
+                         izx = "0.000000" izy = "0.000000" izz = "1.36183e-05" />
+            </inertial>
+      </link>
+  <gazebo reference="gripper_finger1_inner_knuckle_link">
+    <implicitSpringDamper>1</implicitSpringDamper>
+    <mu1>100000</mu1>
+    <mu2>100000</mu2>
+    <kp>100000000.0</kp>
+    <kd>1.0</kd>
+  </gazebo>
+<link name="gripper_finger2_inner_knuckle_link">
+            <visual>
+                <geometry>
+                    <mesh filename="package://rangerboxcr10lidar_description/meshes/ag95_meshes/proximal_phalanx_Link.STL"  scale = "0.001 0.001 0.001"/>
+                </geometry>
+            </visual>
+            <collision>
+                <geometry>
+                    <mesh filename="package://rangerboxcr10lidar_description/meshes/ag95_meshes/proximal_phalanx_Link.STL"  scale = "0.001 0.001 0.001"/>
+                </geometry>
+            </collision>
+            <inertial>
+                <mass value="0.0318004" />
+                <origin xyz="0.0 0.0 0.0" />
+                <inertia ixx = "1.39848e-05" ixy = "-9.54763e-15" ixz = "-5.01422e-06"
+                         iyx = "0.000000" iyy = "1.04943e-05" iyz = "8.94585e-16"
+                         izx = "0.000000" izy = "0.000000" izz = "1.36183e-05" />
+            </inertial>
+        </link>
+   <gazebo reference="gripper_finger2_inner_knuckle_link">
+    <implicitSpringDamper>1</implicitSpringDamper>
+    <mu1>100000</mu1>
+    <mu2>100000</mu2>
+    <kp>100000000.0</kp>
+    <kd>1.0</kd>
+  </gazebo>
+<joint name="gripper_finger1_finger_tip_joint" type="continuous">
+    <parent link="gripper_finger1_inner_knuckle_link"/>
+    <child link="gripper_finger1_finger_tip_link"/>
+            <axis xyz="0 1 0"/>
+            <origin xyz="0.0394969463769 0.0 0.0382752038125 " rpy="0.0 0.0 0.0"/>
+            <limit lower="-3.14" upper="3.14" velocity="100.0" effort="0.1"/>
+            <mimic joint="gripper_finger1_joint" multiplier="1.49462955"/>
+        </joint>
+  <joint name="gripper_finger2_finger_tip_joint" type="continuous">
+    <parent link="gripper_finger2_inner_knuckle_link"/>
+    <child link="gripper_finger2_finger_tip_link"/>
+            <axis xyz="0 1 0"/>
+            <origin rpy="0.0 0.0 0.0" xyz="0.0394969463769  0.0 0.0382752038125  "/>
+            <limit lower="-3.14" upper="3.14" velocity="100.0" effort="0.1"/>
+            <mimic joint="gripper_finger1_joint" multiplier="1.49462955"/>
+  </joint>
+  <link name="gripper_finger1_finger_tip_link">
+            <visual>
+                <geometry>
+                    <mesh filename="package://rangerboxcr10lidar_description/meshes/ag95_meshes/distal_phalanx_Link.STL"  scale = "0.001 0.001 0.001"/>
+                </geometry>
+            </visual>
+            <collision>
+                <geometry>
+                    <mesh filename="package://rangerboxcr10lidar_description/meshes/ag95_meshes/distal_phalanx_Link.STL"  scale = "0.001 0.001 0.001"/>
+                </geometry>
+            </collision>
+            <inertial>
+                <mass value="0.0124305" />
+                <origin xyz="0.0 0.0 0.0" />
+                <inertia ixx = "2.84217e-06" ixy = "-2.48048e-15" ixz = "8.24539e-07"
+                         iyx = "0.000000" iyy = "3.03961e-06" iyz = "2.16427e-13"
+                         izx = "0.000000" izy = "0.000000" izz = "1.11815e-06" />
+            </inertial>
+        </link> 
+  <gazebo reference="gripper_finger1_finger_tip_link">
+    <implicitSpringDamper>1</implicitSpringDamper>
+    <mu1>100000</mu1>
+    <mu2>100000</mu2>
+    <kp>100000000.0</kp>
+    <kd>1.0</kd>
+  </gazebo>
+  <link name="gripper_finger2_finger_tip_link">
+            <visual>
+                <geometry>
+                    <mesh filename="package://rangerboxcr10lidar_description/meshes/ag95_meshes/distal_phalanx_Link.STL"  scale = "0.001 0.001 0.001"/>
+                </geometry>
+            </visual>
+            <collision>
+                <geometry>
+                    <mesh filename="package://rangerboxcr10lidar_description/meshes/ag95_meshes/distal_phalanx_Link.STL"  scale = "0.001 0.001 0.001"/>
+                </geometry>
+            </collision>
+            <inertial>
+                <mass value="0.0124305" />
+                <origin xyz="0.0 0.0 0.0" />
+                <inertia ixx = "2.84217e-06" ixy = "-2.48048e-15" ixz = "8.24539e-07"
+                         iyx = "0.000000" iyy = "3.03961e-06" iyz = "2.16427e-13"
+                         izx = "0.000000" izy = "0.000000" izz = "1.11815e-06" />
+            </inertial>
+        </link> 
+  <gazebo reference="gripper_finger2_finger_tip_link">
+    <implicitSpringDamper>1</implicitSpringDamper>
+    <mu1>100000</mu1>
+    <mu2>100000</mu2>
+    <kp>100000000.0</kp>
+    <kd>1.0</kd>
+  </gazebo>
+  
+    <transmission name="gripper_finger1_trans">
+    <type>transmission_interface/SimpleTransmission</type>
+    <joint name="gripper_finger1_joint">
+      <hardwareInterface>PositionJointInterface</hardwareInterface>
+    </joint>
+    <actuator name="gripper_finger1_motor">
+      <mechanicalReduction>1</mechanicalReduction>
+      <hardwareInterface>PositionJointInterface</hardwareInterface>
+    </actuator>
+  </transmission>
+  <gazebo>
+    <!-- loading plugin: mimic joints works in gazebo now -->
+    <plugin filename="libroboticsgroup_gazebo_mimic_joint_plugin.so" name="mimic_dh_robotics_ag95_1">
+      <joint>gripper_finger1_joint</joint>
+      <mimicJoint>gripper_finger2_joint</mimicJoint>
+      <multiplier>1.0</multiplier>
+      <offset>0.0</offset>
+    </plugin>
+    <plugin filename="libroboticsgroup_gazebo_mimic_joint_plugin.so" name="mimic_dh_robotics_ag95_2">
+      <joint>gripper_finger1_joint</joint>
+      <mimicJoint>gripper_finger2_inner_knuckle_joint</mimicJoint>
+      <multiplier>1.49462955</multiplier>
+      <offset>0.0</offset>
+    </plugin>
+    <plugin filename="libroboticsgroup_gazebo_mimic_joint_plugin.so" name="mimic_dh_robotics_ag95_3">
+      <joint>gripper_finger1_joint</joint>
+      <mimicJoint>gripper_finger1_inner_knuckle_joint</mimicJoint>
+      <multiplier>1.49462955</multiplier>
+      <offset>0.0</offset>
+    </plugin>
+    <plugin filename="libroboticsgroup_gazebo_mimic_joint_plugin.so" name="mimic_dh_robotics_ag95_4">
+      <joint>gripper_finger1_joint</joint>
+      <mimicJoint>gripper_finger1_finger_tip_joint</mimicJoint>
+      <multiplier>1.49462955</multiplier>          
+      <offset>0.0</offset>
+    </plugin>
+    <plugin filename="libroboticsgroup_gazebo_mimic_joint_plugin.so" name="mimic_dh_robotics_ag95_5">
+      <joint>gripper_finger1_joint</joint>
+      <mimicJoint>gripper_finger2_finger_tip_joint</mimicJoint>
+      <multiplier>1.49462955</multiplier>          
+      <offset>0.0</offset>
+    </plugin>
+    <plugin filename="libroboticsgroup_gazebo_mimic_joint_plugin.so" name="mimic_dh_robotics_ag95_6">
+      <joint>gripper_finger1_joint</joint>
+      <mimicJoint>gripper_finger1_finger_joint</mimicJoint>
+      <multiplier>0.4563942</multiplier>
+      <offset>0.0</offset>
+    </plugin>
+    <plugin filename="libroboticsgroup_gazebo_mimic_joint_plugin.so" name="mimic_dh_robotics_ag95_7">
+      <joint>gripper_finger1_joint</joint>
+      <mimicJoint>gripper_finger2_finger_joint</mimicJoint>
+      <multiplier>0.4563942</multiplier>
+      <offset>0.0</offset>
+    </plugin>
+  </gazebo>
+  <!-- ################################ -->
+  <!-- XML: DH Robotics AG95 gripper end -->
+  <!-- ################################ -->
+
+  <!-- ################################ -->
+  <!-- XML: External sensors begin -->
+  <!-- ################################ -->
+  <link name="lidar_link0">
+    <inertial>
+      <origin xyz="-0.0231388360648086 -1.89668118043765E-05 -0.0243541981429779" rpy="0 0 0" />
+      <mass value="0.23446241833643" />
+      <inertia ixx="0.000614236987217416" ixy="6.4447269935246E-08" ixz="-4.38104202781552E-05" iyy="0.000436563788894189" iyz="8.3641850004974E-09" izz="0.000900101034479147" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://rangerboxcr10lidar_description/meshes/lidar_link0.STL" />
+      </geometry>
+      <material name="">
+        <color rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://rangerboxcr10lidar_description/meshes/lidar_link0.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="lidar_joint0" type="fixed">
+    <origin xyz="0.52588 0 0.16587" rpy="0 0 0" />
+    <parent link="base_link" />
+    <child link="lidar_link0" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <!-- ################################ -->
+  <!-- XML: Intel RealSense D435 on lidar_link0 上方（展开自 realsense2_description/urdf/_d435.urdf.xacro；use_nominal_extrinsics=true；mesh 同 test 中 use_mesh=true） -->
+  <!-- XML: mesh 使用 meshes/realsense_meshes/d435.stl；当前 scale 1 1 1 为正确尺寸 -->
+  <!-- XML: 贴合高度请调 d435_joint 的 origin xyz 的 z -->
+  <!-- ################################ -->
+  <joint name="d435_joint" type="fixed">
+    <origin xyz="0.085 0 0.058" rpy="0 0 0" />
+    <parent link="lidar_link0" />
+    <child link="d435_bottom_screw_frame" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <link name="d435_bottom_screw_frame" />
+  <joint name="d435_link_joint" type="fixed">
+    <origin xyz="0.0106 0.0175 0.0125" rpy="0 0 0" />
+    <parent link="d435_bottom_screw_frame" />
+    <child link="d435_link" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <link name="d435_link">
+    <visual>
+      <origin xyz="0.0043 -0.0175 0" rpy="1.5707963267948966 0 1.5707963267948966" />
+      <geometry>
+        <mesh filename="package://rangerboxcr10lidar_description/meshes/realsense_meshes/d435.stl" scale="1 1 1" />
+      </geometry>
+      <!-- ################################ -->
+      <!-- XML: STL 无贴图；仅 name="aluminum" 时 RViz 等对 STL 常不套用全局材质→发黑，故在 visual 内显式 color -->
+      <!-- ################################ -->
+      <material name="d435_visual_grey">
+        <color rgba="0.82 0.82 0.85 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 -0.0175 0" rpy="0 0 0" />
+      <geometry>
+        <box size="0.02505 0.090 0.025" />
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value="0.072" />
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <inertia ixx="0.003881243" ixy="0.0" ixz="0.0" iyy="0.000498940" iyz="0.0" izz="0.003879257" />
+    </inertial>
+  </link>
+  <joint name="d435_depth_joint" type="fixed">
+    <origin xyz="0 0 0" rpy="0 0 0" />
+    <parent link="d435_link" />
+    <child link="d435_depth_frame" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <link name="d435_depth_frame" />
+  <joint name="d435_depth_optical_joint" type="fixed">
+    <origin xyz="0 0 0" rpy="-1.5707963267948966 0 -1.5707963267948966" />
+    <parent link="d435_depth_frame" />
+    <child link="d435_depth_optical_frame" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <link name="d435_depth_optical_frame" />
+  <joint name="d435_infra1_joint" type="fixed">
+    <origin xyz="0 0 0" rpy="0 0 0" />
+    <parent link="d435_link" />
+    <child link="d435_infra1_frame" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <link name="d435_infra1_frame" />
+  <joint name="d435_infra1_optical_joint" type="fixed">
+    <origin xyz="0 0 0" rpy="-1.5707963267948966 0 -1.5707963267948966" />
+    <parent link="d435_infra1_frame" />
+    <child link="d435_infra1_optical_frame" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <link name="d435_infra1_optical_frame" />
+  <joint name="d435_infra2_joint" type="fixed">
+    <origin xyz="0 -0.050 0" rpy="0 0 0" />
+    <parent link="d435_link" />
+    <child link="d435_infra2_frame" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <link name="d435_infra2_frame" />
+  <joint name="d435_infra2_optical_joint" type="fixed">
+    <origin xyz="0 0 0" rpy="-1.5707963267948966 0 -1.5707963267948966" />
+    <parent link="d435_infra2_frame" />
+    <child link="d435_infra2_optical_frame" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <link name="d435_infra2_optical_frame" />
+  <joint name="d435_color_joint" type="fixed">
+    <origin xyz="0 0.015 0" rpy="0 0 0" />
+    <parent link="d435_link" />
+    <child link="d435_color_frame" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <link name="d435_color_frame" />
+  <joint name="d435_color_optical_joint" type="fixed">
+    <origin xyz="0 0 0" rpy="-1.5707963267948966 0 -1.5707963267948966" />
+    <parent link="d435_color_frame" />
+    <child link="d435_color_optical_frame" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <link name="d435_color_optical_frame" />
+  <!-- ################################ -->
+  <!-- XML: Intel RealSense D435 end -->
+  <!-- ################################ -->
+  <link name="box_link">
+    <inertial>
+      <origin xyz="-0.11221419407773 0.00944303076288386 0.105632229478493" rpy="0 0 0" />
+      <mass value="6.82719536460097" />
+      <inertia ixx="0.254797603949897" ixy="-2.17109957961982E-06" ixz="4.07636435022924E-05" iyy="0.203064909193142" iyz="-1.33832322203915E-07" izz="0.414376459662026" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://rangerboxcr10lidar_description/meshes/box_link.STL" />
+      </geometry>
+      <material name="">
+        <color rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://rangerboxcr10lidar_description/meshes/box_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="box_joint" type="fixed">
+    <origin xyz="0 0 0.09" rpy="0 0 0" />
+    <parent link="base_link" />
+    <child link="box_link" />
+    <axis xyz="0 0 0" />
+  </joint>
+  <!-- ################################ -->
+  <!-- XML: External sensors end -->
+  <!-- ################################ -->
+</robot>

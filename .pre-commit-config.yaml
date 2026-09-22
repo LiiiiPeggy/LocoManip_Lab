@@ -17,6 +17,9 @@ repos:
       - id: destroyed-symlinks
       - id: check-added-large-files
         args: ["--maxkb=5000"]
+        # rangerboxcr10lidar ships its meshes as regular Git objects (see .gitattributes),
+        # so the per-file limit does not apply to that package.
+        exclude: ^rangerboxcr10lidar_description/meshes/
       - id: check-yaml
       - id: check-merge-conflict
       - id: check-case-conflict

@@ -1,0 +1,22 @@
+# ################################
+# YAML: combined joint names begin
+# ################################
+controller_joint_names:
+  - ''
+  - fr_steering_joint
+  - fr_wheel_joint
+  - fl_steering_wheel_joint
+  - fl_wheel_joint
+  - rl_steering_wheel_joint
+  - rl_wheel_joint
+  - rr_steering_wheel_joint
+  - rr_wheel_joint
+  - cr10_joint1
+  - cr10_joint2
+  - cr10_joint3
+  - cr10_joint4
+  - cr10_joint5
+  - cr10_joint6
+# ################################
+# YAML: combined joint names end
+# ################################
