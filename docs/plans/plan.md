@@ -93,7 +93,7 @@
 
 | 新增/修改 | 参照 | 说明 |
 |---|---|---|
-| `assets/ranger_cr10/*.usd` + `config.yaml` | `assets/go2_piper/` | URDF→USD 产物(§7 阶段 0) |
+| `assets/ranger_cr10/`(转换专用 URDF + `config.yaml` + USD 产物) | `assets/go2_piper/` | 转换所需的一切都收在这里,**description 包不动**(§7 阶段 0) |
 | `assets/ranger_cr10/ranger_cr10_articulation_cfg.py` | 同目录 | 执行器分组、初始角、USD 路径 |
 | `config/ranger_cr10/__init__.py` | `config/go2_piper/__init__.py` | 4 个 `gym.register` |
 | `config/ranger_cr10/flat_env_cfg.py` / `wbc_env_cfg.py` | 同目录 | 命令范围、奖励权重、EE body 名 |
@@ -316,13 +316,25 @@
 > 验收遵循 AGENTS.md:**不认 exit 0,只认正证据**(行数/维度、生成文件、指标)。
 
 ### 阶段 0 — URDF→USD 转换(风险最高,先做最小验证)
-1. 建 `assets/ranger_cr10/`,照抄 GO2-PIPER 的 `config.yaml` 字段
-   (`fix_base: false`、`merge_fixed_joints: true`、`collider_type: convex_hull`、
-   `convert_mimic_joints_to_normal_joints: false`)。
-2. 用 Isaac Lab 自带工具转换:`IsaacLab5/scripts/tools/convert_urdf.py`。先解决 `package://` URI。
-   网格已减面(§5.2),转换时直接使用,不要再动。
-3. **验收**:打印 USD 关节表 —— 关节数、名称、类型、limit;确认底盘 8 + 臂 6 在列,
-   mimic 已按预期处理,根 link 是 `base_link`,臂关节 limit **等于 `rangercr10lidar.urdf` 的值**。
+
+**资产目录边界(2026-09-23 定)**:为转换而做的一切改动都落在 `assets/ranger_cr10/`,
+**description 包本身不再动** —— 它已经因为减面(§5.2)与 `agx/` 里那份分叉了,
+不再叠加新的改动来源。
+
+1. 建 `assets/ranger_cr10/`,内含两样东西:
+   - **一份转换专用 URDF 副本**。唯一改动:把
+     `package://rangerboxcr10lidar_description/...` 改写为指向 description 包的相对路径。
+     其余内容与原 URDF **逐字一致**,便于日后 diff 确认"改动只有路径"。
+   - `config.yaml`,照抄 GO2-PIPER 的字段(`fix_base: false`、`merge_fixed_joints: true`、
+     `collider_type: convex_hull`、`convert_mimic_joints_to_normal_joints: false`)。
+2. 用 Isaac Lab 自带工具转换:`IsaacLab5/scripts/tools/convert_urdf.py`。
+   网格用**减面后**的版本(§5.2),转换时不要再动网格。
+3. **验收(必须打印证据,不能只看 exit code)**:
+   - 打印 USD 的关节表 —— 关节数、名称、类型、limit;
+   - 确认底盘 8(4 转向 + 4 驱动)+ 臂 6 全部在列,根 link 是 `base_link`;
+   - mimic 关节按预期处理(压成 1 个);
+   - **臂关节 limit 逐项等于 `rangercr10lidar.urdf` 的值**(§2.2 那张表),
+     任何一项不一致都说明转换没做完。
 
 ### 阶段 1 — 接入与注册
 4. 写 `ranger_cr10_articulation_cfg.py`:
