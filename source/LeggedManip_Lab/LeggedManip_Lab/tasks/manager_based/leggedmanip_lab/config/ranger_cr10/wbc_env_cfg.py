@@ -64,6 +64,10 @@ class RangerActionsCfg:
         # fr, fl, rl, rr -- the URDF gives fr/rr axis 0 0 1 and fl/rl axis 0 0 -1,
         # so the two sides need opposite signs to roll the same way.
         wheel_sign=(-1.0, 1.0, 1.0, -1.0),
+        # sign of the steering joint axis relative to a left-positive steer angle,
+        # fixed by measurement: at +1 a commanded +wz produced -23.5 deg of yaw
+        # instead of +68.8 deg
+        steering_sign=-1.0,
         clip=((-0.5, -0.5), (0.5, 0.5)),
     )
 

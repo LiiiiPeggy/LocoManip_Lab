@@ -150,8 +150,28 @@ class BaseVelocityAction(ActionTerm):
         v_vec_y = wz_col * wx
 
         steer = torch.atan2(v_vec_y, v_vec_x)
-        steer = torch.clamp(steer, -self.cfg.max_steer_angle, self.cfg.max_steer_angle)
         speed = torch.sqrt(v_vec_x**2 + v_vec_y**2)
+
+        # Fold the angle into the nearest half turn and carry the difference in the wheel
+        # speed. Without this, driving backwards commands steer = atan2(0, -v) = pi, which
+        # then gets clamped to the steering limit -- so "reverse" turns into "steer hard
+        # while driving forwards", measured as +0.57 m of travel where -1.2 m was asked
+        # for, with 53 degrees of unwanted yaw.
+        flip = torch.abs(steer) > (math.pi / 2)
+        steer = torch.where(flip, steer - torch.sign(steer) * math.pi, steer)
+        speed = torch.where(flip, -speed, speed)
+
+        # The steering clamp depends on the branch: the driver only limits the angle in
+        # Ackermann mode, while spinning commands each wheel to point tangentially, which
+        # needs up to 90 degrees. Clamping the spin case to the Ackermann limit pushes the
+        # wheels part-way radial, so they scrub instead of rolling -- measured as a spin of
+        # 0.05 rad/s where 0.3 was asked for.
+        steer_limit = torch.where(
+            spinning,
+            torch.full_like(steer, self.cfg.max_spin_steer_angle),
+            torch.full_like(steer, self.cfg.max_steer_angle),
+        )
+        steer = torch.clamp(steer, -steer_limit, steer_limit)
 
         self._steering_target[:] = self.cfg.steering_sign * steer
         sign = torch.as_tensor(self.cfg.wheel_sign, device=self.device, dtype=torch.float32).reshape(1, -1)
@@ -231,6 +251,10 @@ class BaseVelocityActionCfg(ActionTermCfg):
 
     max_spin_rate: float = 0.7853
     """Yaw-rate clamp when spinning on the spot, from ``ranger_params.hpp``."""
+
+    max_spin_steer_angle: float = 1.5708
+    """Steering clamp while spinning. The driver only limits the angle in Ackermann mode;
+    spinning points each wheel tangentially, which needs up to a quarter turn."""
 
     steering_sign: float = 1.0
     """Sign relating the URDF steering joint axis to a left-positive steering angle."""
