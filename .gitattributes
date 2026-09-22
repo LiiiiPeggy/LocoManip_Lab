@@ -20,4 +20,8 @@
 # Must come after the *.stl / *.STL rules: the last matching pattern wins.
 rangerboxcr10lidar_description/meshes/** -filter -diff -merge -text
 
+# Same for the USD converted from those meshes: it is derived data of the same
+# robot, kept as a regular Git object so a clone needs no git-lfs.
+source/LeggedManip_Lab/LeggedManip_Lab/assets/ranger_cr10/configuration/ranger_cr10_base.usd -filter -diff -merge -text
+
 *.bat text eol=crlf

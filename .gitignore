@@ -83,9 +83,10 @@ MUJOCO_LOG.TXT
 **/tactile_record/*
 **/gelsight_r15_data/*
 
-# 大型 USD 资产（只保留 go2_piper_base.usd 入库）
+# 大型 USD 资产（只保留 go2_piper_base.usd 与 ranger_cr10_base.usd 入库）
 source/LeggedManip_Lab/LeggedManip_Lab/assets/*/configuration/*_base.usd
 !source/LeggedManip_Lab/LeggedManip_Lab/assets/go2_piper/configuration/go2_piper_base.usd
+!source/LeggedManip_Lab/LeggedManip_Lab/assets/ranger_cr10/configuration/ranger_cr10_base.usd
 
 # Robot description packages (SW2URDF export artifacts)
 **/rangerboxcr10lidar_description/export.log
