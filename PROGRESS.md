@@ -123,9 +123,13 @@ Artifacts (each verified by loading/playing it back, not by exit code):
    fingertip centre, one unified 10 Hz policy (200 Hz physics, `decimation = 20`, base held
    zero-order between policy steps). The speed-tracking rewards are dropped in favour of base
    velocity and base action-rate penalties.
-   Open items are the plan's §9 R1–R5. **R5 is the consequential one**: the end-effector XY target
-   is currently body-frame, under which "targets that require driving the base" cannot exist at all,
-   so it must move to the world frame before the joint scheme can work.
+   **R5 is resolved (2026-09-23)**: the end-effector target is kept in the **world frame** internally
+   (`target_pose_w`, resampled as the current base pose plus a local offset and then frozen for that
+   command's lifetime), the policy observes it **relative to `base_link`** (`target_pose_b`), and the
+   tracking reward is computed **in the world frame** — a new `UniformPoseWorldCommand` used only by
+   `ranger_cr10`, leaving GO2-PIPER's `UniformPoseWBCCommand` untouched. This is what makes "targets
+   that require driving the base" exist at all.
+   Remaining open items are the plan's §9 R1, R3 and R4 (TCP offset, success criteria, robot access).
 
    **Stage 0 (URDF→USD) complete**: `assets/ranger_cr10/` holds the conversion-only URDF, config,
    driver script and the USD (22 MB, kept as a regular Git object like the source meshes). Verified
