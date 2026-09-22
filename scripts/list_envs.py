@@ -61,11 +61,14 @@ def main():
     index = 0
     # acquire all Isaac environments names
     for task_spec in gym.registry.values():
-        if "LeggedManip" not in task_spec.entry_point:
+        # NOTE: `entry_point` can be a callable (gymnasium >= 1.0), so identify this
+        # extension's environments by their config entry point instead.
+        env_cfg_entry_point = task_spec.kwargs.get("env_cfg_entry_point", "")
+        if "LeggedManip" not in str(env_cfg_entry_point):
             continue
         if args_cli.keyword is None or args_cli.keyword.lower() in task_spec.id.lower():
             # add details to table
-            table.add_row([index + 1, task_spec.id, task_spec.entry_point, task_spec.kwargs["env_cfg_entry_point"]])
+            table.add_row([index + 1, task_spec.id, str(task_spec.entry_point), env_cfg_entry_point])
             # increment count
             index += 1
 
