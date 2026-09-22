@@ -72,6 +72,9 @@ MUJOCO_LOG.TXT
 # Continue AI tool
 .continue/
 
+# CodeGraph index (local, regenerable)
+.codegraph/
+
 # Generated VS Code settings (use template instead)
 .vscode/settings.json
 .vscode/launch.json
