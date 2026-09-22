@@ -81,7 +81,10 @@ EE 目标内部固定在世界系、Policy 观测用 base-relative 量、Reward 
 1. `package://` URI —— Isaac Sim 无法解析,需映射到本地路径或改写为相对路径。
 2. 臂关节 `effort=0/velocity=0` —— 力矩与速度上限改由 `ArticulationCfg` 的 actuator 提供。
 3. 连续关节无 `<limit>` —— 需显式给定,否则执行器配置异常。
-4. 7 个 mimic 关节 —— Isaac Lab 不支持 URDF mimic;建议**压成 1 个关节**(夹爪本次不进动作空间)。
+4. 7 个 mimic 关节 —— 转换时**保留这些关节,由 PhysX mimic 约束驱动**
+   (`convert_mimic_joints_to_normal_joints: true`)。它们**不是被压成 1 个关节**:
+   7 个从动关节在 USD 里依然存在,只是挂上 `PhysxMimicJointAPI`,因此最终是 **22 个关节**
+   (§7 阶段 0 已实测验证)。夹爪本次不进动作空间。
 5. 23 个纯 TF frame link 无 inertial —— 转换时会被压掉,需确认树结构不受影响。
 6. 网格过密(最大单件 30 MB / 63.7 万面)—— **已执行减面**(§5.2):83 MB → 19 MB、172.8 万 → 38.1 万面。
 
@@ -308,7 +311,7 @@ N = 6 个臂关节 → **3 × 33 = 99**(以阶段 1 打印出来的实测值为�
 | 层 | 事项 | 决定 |
 |---|---|---|
 | A1 | CR10 关节限位 | 以 **`rangercr10lidar.urdf`** 为准(§2.2) |
-| A2 | 末端执行器帧 | **夹爪指尖中心**(`gripper_finger1_finger_tip_link` / `gripper_finger2_finger_tip_link` 之间的中点,见 §7 阶段 1) |
+| A2 | 末端执行器帧 | **夹爪指尖中心**,且以**虚拟 TCP**方式实现:在 observation/reward 里对真实连杆 `gripper_base_link` 施加固定变换算出该点,**不往 USD 里加 frame**(理由与静默失败风险见 §7 阶段 1) |
 | B1 | 底盘方案 | **方案 C′ —— 底盘 + CR10 联合 WBC**(**2026-09-23 修订**,原为方案 B)。动作 = `[vx, wz, 6×臂]`,底盘速度由 RL 自主决定;底盘关节不入动作空间;**不加 `vy` 蟹行**;方案 B 保留为 baseline(§4) |
 | B2 | 底盘状态进观测 | **不进 policy observation**(2026-09-23 随 B1 修订而定):底层轮系由 Ranger 控制器负责。原 (a)/(b) 选项作废,§9 R2 关闭 |
 | B3 | 无 IMU 的替代 | 走 **(a) 从 `/odom` 推算**,并在仿真里加入**噪声/漂移随机化** |
@@ -460,13 +463,15 @@ N = 6 个臂关节 → **3 × 33 = 99**(以阶段 1 打印出来的实测值为�
      `package://rangerboxcr10lidar_description/...` 改写为指向 description 包的相对路径。
      其余内容与原 URDF **逐字一致**,便于日后 diff 确认"改动只有路径"。
    - `config.yaml`,照抄 GO2-PIPER 的字段(`fix_base: false`、`merge_fixed_joints: true`、
-     `collider_type: convex_hull`、`convert_mimic_joints_to_normal_joints: false`)。
+     `collider_type: convex_hull`),但 **`convert_mimic_joints_to_normal_joints` 取 `true`**
+     —— 与 go2_piper 相反,理由见 §2.1 与下面阶段 0 的实测结论。
 2. 用 Isaac Lab 自带工具转换:`IsaacLab5/scripts/tools/convert_urdf.py`。
    网格用**减面后**的版本(§5.2),转换时不要再动网格。
 3. **验收(必须打印证据,不能只看 exit code)**:
    - 打印 USD 的关节表 —— 关节数、名称、类型、limit;
    - 确认底盘 8(4 转向 + 4 驱动)+ 臂 6 全部在列,根 link 是 `base_link`;
-   - mimic 关节按预期处理(压成 1 个);
+   - mimic 关节按预期处理 —— **7 个从动关节保留在关节表里并挂上 `PhysxMimicJointAPI`**,
+     不是"压成 1 个"(需在 USD 里核对 `PhysxMimicJointAPI` 确实存在);
    - **臂关节 limit 逐项等于 `rangercr10lidar.urdf` 的值**(§2.2 那张表),
      任何一项不一致都说明转换没做完。
 
@@ -503,9 +508,34 @@ steering_link → wheel;`cr10_Link1..5` → `cr10_joint2..6`;`cr10_Link6` → �
    - `effort_limit` 按 CR10 规格填(URDF 里是 0);`stiffness`/`damping` 起步值参照 GO2-PIPER 的 Piper;
    - 初始角:转向归零,臂取肘部朝前的姿态(按 j2 只有 ±90° 的实际可达区间选,别照抄 Piper)。
 5. 写 `config/ranger_cr10/` 四件套 + agents:
-   - `end_effector` 帧取 **夹爪指尖中心**——URDF 里没有现成 link,
-     需要在转换后的 USD 上加一个 fixed frame,位置为 `gripper_finger1_finger_tip_link` 与
-     `gripper_finger2_finger_tip_link` 的中点(两指闭合时即为夹持中心);
+   - **末端 TCP 用"虚拟 TCP"实现,不要往 USD 里加 frame**:
+
+     ```
+     gripper_base_link(真实 articulation rigid body)
+             ↓ 固定 TCP offset(两指尖中点相对它的常值变换)
+     virtual fingertip-center TCP
+     ```
+
+     即在 observation / reward 里对 `gripper_base_link` 的位姿施加该固定变换得到 TCP 位姿
+     (位置取 `gripper_finger1_finger_tip_link` 与 `gripper_finger2_finger_tip_link` 的中点)。
+
+     **为什么不能靠新加一个 frame**:
+     `Articulation.find_bodies()` 是拿名字去匹配 `self.body_names`,而它是
+     `root_physx_view.shared_metatype.link_names` —— **PhysX 的 articulation 连杆名**。
+     新加的普通 Xform 不是 articulation 连杆,不在这个列表里;叠加 `merge_fixed_joints: true`
+     会合并固定结构,这条路更容易踩空。而 `position_command_error_exp` / `end_effector_link0_relative_pose`
+     都是按 articulation body 查的 —— 查不到时 `end_effector_link0_relative_pose` **静默返回全 0**
+     (`observations.py:85-86`),训练照跑但信息是假的(§3.2),很难发现。
+
+     该 offset 在**夹爪不动作、保持固定开合度**时是常值 —— 夹爪本次不进动作空间,所以成立。
+     若将来要把夹爪纳入动作空间,这个"固定"变换就要改成随指关节角变化。
+
+     **除非实测确认** `find_bodies()` 能返回新加的 frame,否则不要走加 frame 的路。
+
+     **受影响的两个函数**:reward 的 `position_command_error_exp` 与 critic 观测的
+     `end_effector_link0_relative_pose` 都是按 articulation body 取末端位姿的 ——
+     需要为 `ranger_cr10` 写 TCP 版本(对 `gripper_base_link` 施加 offset),
+     或在共享实现里加 `tcp_offset` 参数并**默认不启用**。**不改 GO2-PIPER 的默认行为。**
    - **动作空间按 §3.3 组装**:`base_vel`(2 维,新写的动作项)+ `joint_pos`(6 个臂关节);
      `base_vel` 输出范围即 `vx ∈ [-0.5, 0.5]`、`wz ∈ [-0.5, 0.5]`,**`vy` 恒为 0**;
    - **底盘控制器**(§4.1)先按纯运动学实现,由 `base_vel` 动作项在**每个物理步**驱动;
@@ -593,7 +623,8 @@ steering_link → wheel;`cr10_Link1..5` → `cr10_joint2..6`;`cr10_Link6` → �
 | 车轮摩擦/侧滑未辨识(§5 C3 决定先不做) | 已知 sim-to-real 主要误差源 | 靠域随机化覆盖;上机后按实测回填 |
 | 无 `/cmd_vel` 看门狗 | 未处理 | 部署节点自建超时归零(阶段 5 清单已列) |
 | 关节名不匹配(driver `joint1..6` vs URDF `cr10_joint1..6`) | 未处理 | 阶段 5 映射表覆盖 |
-| 末端帧 = 指尖中心,与控制器 TCP 是否一致 | **未确认** | 见 §9 R1 —— 上机前必须核对,否则位姿指令系统性偏移 |
+| 末端帧 = 指尖中心(以**虚拟 TCP** 实现),与控制器 TCP 是否一致 | **未确认** | 见 §9 R1 —— 上机前必须核对,否则位姿指令系统性偏移 |
+| 虚拟 TCP 的固定变换取值(两指尖中点相对 `gripper_base_link`) | 未计算 | 阶段 1 从 URDF 里按初始开合度算出并写成常量;写错会得到一个"差一点"的末端点,误差不在指标里体现 |
 
 ---
 
@@ -602,7 +633,8 @@ steering_link → wheel;`cr10_Link1..5` → `cr10_joint2..6`;`cr10_Link6` → �
 
 ### R1. 末端帧与控制器 TCP 是否一致?(上机前必须核对)
 
-已定仿真里的 `end_effector` = **夹爪指尖中心**(§5 A2)。但这只在仿真侧成立 ——
+已定仿真里的末端点 = **夹爪指尖中心**,且以**虚拟 TCP** 方式实现(对 `gripper_base_link` 施加固定
+变换,不往 USD 加 frame,§5 A2 / §7 阶段 1)。但这只在仿真侧成立 ——
 实机 `ToolVectorActual` 报的是 **Dobot 控制器里配置的工具坐标系(TCP)**。
 
 - 如果控制器 TCP 也配在指尖中心 → 两侧一致,直接可用;
