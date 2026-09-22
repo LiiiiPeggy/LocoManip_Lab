@@ -113,14 +113,21 @@ Artifacts (each verified by loading/playing it back, not by exit code):
 3. Compare the trained policy against `policy_pretrained.pt` under the same `config_wbc.yaml`.
 4. Decide the fate of the six gitignored `*_base.usd` assets (see PROCESS.md §3).
 5. **New platform**: the port plan for the wheeled `rangerboxcr10lidar` (AgileX Ranger 4WS/4WD +
-   Dobot CR10 + AG95) is at `docs/plans/plan.md`. **All 15 decisions are locked (2026-09-23) and
-   there are no blockers left** — it is ready to start at its stage 0 (URDF→USD conversion), but
-   **no implementation has begun**. Key locked decisions: base stays a `(vx, vy, wz)` command
-   (`/cmd_vel` is the chassis' only input) with arm-only action space; joint limits follow
+   Dobot CR10 + AG95) is at `docs/plans/plan.md`. **All 15 decisions are locked (2026-09-23);
+   stages 0 is done, stage 1 has not started.** Key locked decisions: base stays a `(vx, vy, wz)`
+   command (`/cmd_vel` is the chassis' only input) with arm-only action space; joint limits follow
    `rangercr10lidar.urdf`; end-effector frame is the gripper fingertip centre; arm actions at 10 Hz
    on both sides; conservative command ranges (±0.5 m/s, ±0.5 rad/s, no `vy`).
    Four non-blocking items (its §9 R1–R4) are still open — most notably R1, whether the TCP
    configured in the Dobot controller actually sits at the fingertip centre.
+
+   **Stage 0 (URDF→USD) complete**: `assets/ranger_cr10/` holds the conversion-only URDF, config,
+   driver script and the USD (22 MB, kept as a regular Git object like the source meshes). Verified
+   by a printed joint table: 22 joints, correct parenting, arm limits equal to the URDF's.
+   Two things differ from go2_piper and are easy to get wrong — see the plan's stage-0 notes:
+   `convert_mimic_joints_to_normal_joints` must be **true** here (the AG95 has 7 mimic joints, and
+   `false` leaves them as free hinges), and the USD's limits are in **degrees** on both platforms.
+   The source meshes were decimated first: 83 MB / 1.73 M faces → 19 MB / 0.38 M faces.
 
 ## Known minor documentation drift (verify before editing docs)
 
