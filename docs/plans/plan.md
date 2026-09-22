@@ -512,13 +512,14 @@ steering_link → wheel;`cr10_Link1..5` → `cr10_joint2..6`;`cr10_Link6` → �
    - **末端 TCP 用"虚拟 TCP"实现,不要往 USD 里加 frame**:
 
      ```
-     gripper_base_link(真实 articulation rigid body)
+     cr10_Link6(真实 articulation rigid body,CR10 法兰)
              ↓ 固定 TCP offset(两指尖中点相对它的常值变换)
      virtual fingertip-center TCP
      ```
 
-     即在 observation / reward 里对 `gripper_base_link` 的位姿施加该固定变换得到 TCP 位姿
-     (位置取 `gripper_finger1_finger_tip_link` 与 `gripper_finger2_finger_tip_link` 的中点)。
+     ⚠️ **锚点是 `cr10_Link6`,不是 `gripper_base_link`**:后者在转换时被
+     `merge_fixed_joints: true` 合并进了 `cr10_Link6`,**在 USD 里根本不存在**
+     (实测 23 个 body 里没有它)。这是本计划早先版本的错误假设。
 
      **为什么不能靠新加一个 frame**:
      `Articulation.find_bodies()` 是拿名字去匹配 `self.body_names`,而它是
@@ -527,6 +528,9 @@ steering_link → wheel;`cr10_Link1..5` → `cr10_joint2..6`;`cr10_Link6` → �
      会合并固定结构,这条路更容易踩空。而 `position_command_error_exp` / `end_effector_link0_relative_pose`
      都是按 articulation body 查的 —— 查不到时 `end_effector_link0_relative_pose` **静默返回全 0**
      (`observations.py:85-86`),训练照跑但信息是假的(§3.2),很难发现。
+
+     **实测偏移**(闭合夹爪、臂稳定姿态下测):`TCP_OFFSET_POS = (0.0, 0.00003, 0.14389)`,
+     模长 **0.1439 m**,方向几乎就在 Link6 的 z 轴上。写法见 `mdp/tcp.py`。
 
      该 offset 在**夹爪不动作、保持固定开合度**时是常值 —— 夹爪本次不进动作空间,所以成立。
      若将来要把夹爪纳入动作空间,这个"固定"变换就要改成随指关节角变化。
@@ -552,6 +556,29 @@ steering_link → wheel;`cr10_Link1..5` → `cr10_joint2..6`;`cr10_Link6` → �
 6. **验收**:`list_envs.py` 行数 **28 → 32**;`zero_agent.py --task RANGER-CR10-WBC` 不报错
    并**打印 policy 动作维度 = 8、观测维度 = 实测值**(预期 99,见 §4.3)。
    打印这两个数是用来证伪 §3.2 那两条静默失败通道的,不能跳过。
+
+#### ⚠️ 阶段 1 实施中实测到的六件事(均与计划原文的假设不同)
+
+1. **`gripper_base_link` 在 USD 里不存在** —— 被 `merge_fixed_joints` 合并进了 `cr10_Link6`
+   (23 个 body 里没有它)。TCP 的锚点因此必须是 `cr10_Link6`,见上面的虚拟 TCP 说明。
+2. **mimic 约束单独撑不住连杆**。导入器写的是 `naturalFrequency = 25`、`dampingRatio = 0.005`
+   (几乎无阻尼),实测 7 个从动关节里有 2 个漂到 **0.72 rad** 和 **2.79 rad**(并行连杆闭环,
+   约束求解器压不住)。两道措施一起上:
+   - 把约束调硬到 `natFreq = 200 / dampingRatio = 1.0` —— **写进转换驱动的后处理**
+     (`stiffen_mimic_constraints()`),否则重新转换就丢了;
+   - 给 7 个从动关节加**保持驱动**(目标 = 0)。它们与 mimic 关系
+     `q_i = gearing × 0 + 0 = 0` 完全一致,所以驱动和约束不会互相打架。
+   改完最大残差 **0.0124 rad**。**mimic 关节是保留的,不是压成 1 个**(§2.1)。
+3. **臂的执行器刚度不能照抄 go2_piper**。那套 50–80 是给轻得多的 Piper 臂的。PD 是弹簧:
+   24.8 kg 的 CR10 在肩部约需 68 N·m,`kp = 80` 对应稳态误差 `68/80 ≈ 0.85 rad` ——
+   实测关节直接顶到限位(偏差 0.97 rad)。提到 **1500–4000**(肩部最高)后残差降到 0.0072 rad。
+4. **底盘高度**:几何推算 0.4114 m,实际轮胎受力后稳定在 **0.4071 m**,按后者生成初始位姿。
+5. **臂的"正前方"对应 `cr10_joint1 ≈ 0.94`(它的上限)**,此时 TCP 在
+   `(0.549, -0.001, 0.470) m`;而 `j1 = 0` 时 TCP 偏到右侧 24 cm。初始姿态取
+   `j1 = 0.6`(TCP 约在 `(0.52, -0.07, 0.47)`),留出 `reset_joints_by_scale(0.5, 1.5)`
+   不越过 j1 上限的余量。目标采样范围也据此以"臂的实际工作位置"为中心,而不是假设在 y = 0。
+6. **`list_envs.py` 通过 32 行不能证明配置可用**:它只做 gym 注册,entry point 是字符串、
+   懒解析,**配置类根本没被导入**。真正验证必须建环境——这也是为什么验收要求打印维度。
 
 ### 阶段 2 — 底盘单独跑通(先于联合训练)
 

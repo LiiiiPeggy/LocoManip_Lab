@@ -22,6 +22,7 @@ from isaaclab.envs.mdp.commands import (
 )
 from ..pose_command_wbc import UniformPoseWBCCommand
 from ..pose_command_b import UniformBodyPoseCommand
+from ..pose_command_world import UniformPoseWorldCommand
 
 # -- pose
 @configclass
@@ -47,6 +48,25 @@ class UniformPoseWBCCommandCfg(UniformPoseCommandBaseCfg):
     """The range limit """
     link_name: str = "link0"
     """The name of the root body, which serves as the reference frame for the command."""
+    curriculum_enabled: bool = False
+
+
+@configclass
+class UniformPoseWorldCommandCfg(UniformPoseCommandBaseCfg):
+    """Pose command whose target is frozen in the world; the policy sees it chassis-relative.
+
+    Used by ranger_cr10, where the policy drives the base as well as the arm -- see
+    docs/plans/plan.md section 4.2. The existing WBC command keeps its body-frame XY.
+    """
+
+    class_type: type = UniformPoseWorldCommand
+
+    ranges: UniformPoseCommandBaseCfg.Ranges = None  # type: ignore
+    """Sampling range of the target offset, expressed in the chassis frame at resample time."""
+    limit_ranges: UniformPoseCommandBaseCfg.Ranges = None  # type: ignore
+    """Range limit for the curriculum."""
+    link_name: str = "base_link"
+    """Body the command is expressed relative to, and against which the target is frozen."""
     curriculum_enabled: bool = False
 
 

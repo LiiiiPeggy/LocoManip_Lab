@@ -72,6 +72,29 @@ def build_cfg() -> UrdfConverterCfg:
     )
 
 
+def stiffen_mimic_constraints(usd_path: str, natural_frequency: float = 200.0, damping_ratio: float = 1.0) -> int:
+    """Raise the mimic constraint stiffness on the converted USD.
+
+    The importer writes ``naturalFrequency = 25`` with ``dampingRatio = 0.005``, which is
+    far too soft to hold the AG95's parallel linkage: measured on the settled robot, two
+    of the seven mimic joints drifted to 0.72 and 2.79 rad. At 200 Hz / 1.0 they hold to
+    within 0.013 rad. The conversion is re-run from scratch on a fresh clone, so this has
+    to happen here rather than as a one-off edit to the output.
+    """
+    stage = Usd.Stage.Open(usd_path)
+    count = 0
+    for prim in stage.Traverse():
+        for schema in prim.GetAppliedSchemas():
+            if "imic" not in schema:
+                continue
+            axis = schema.split(":")[-1]
+            prim.GetAttribute(f"physxMimicJoint:{axis}:naturalFrequency").Set(natural_frequency)
+            prim.GetAttribute(f"physxMimicJoint:{axis}:dampingRatio").Set(damping_ratio)
+            count += 1
+    stage.GetRootLayer().Save()
+    return count
+
+
 def print_joint_table(usd_path: str) -> None:
     """Print every joint in the converted USD with its type and limits."""
     stage = Usd.Stage.Open(usd_path)
@@ -103,5 +126,9 @@ if __name__ == "__main__":
     converter = UrdfConverter(cfg)
     print(f"[convert] URDF : {cfg.asset_path}")
     print(f"[convert] USD  : {converter.usd_path}")
+
+    n = stiffen_mimic_constraints(converter.usd_path)
+    print(f"[convert] stiffened {n} mimic constraints to naturalFrequency=200, dampingRatio=1.0")
+
     print_joint_table(converter.usd_path)
     simulation_app.close()

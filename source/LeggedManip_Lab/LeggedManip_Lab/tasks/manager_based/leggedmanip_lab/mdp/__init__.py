@@ -24,3 +24,22 @@ from .curriculums import *  # noqa: F401, F403
 from .observations import *
 from .pose_command_wbc import *
 from .pose_command_b import *
+
+# -- additions for the wheeled ranger_cr10 platform (docs/plans/plan.md)
+# imported by name rather than with ``*`` so their module-level helpers (dataclasses.field,
+# configclass, ActionTerm, ...) do not leak into the mdp namespace
+from .base_vel import (  # noqa: F401
+    BaseVelocityAction,
+    BaseVelocityActionCfg,
+    base_speed_above_threshold_l2,
+    base_velocity_rate_l2,
+)
+from .pose_command_world import UniformPoseWorldCommand  # noqa: F401
+from .tcp import (  # noqa: F401
+    TCP_ANCHOR_BODY,
+    TCP_OFFSET_POS,
+    TCP_OFFSET_QUAT,
+    end_effector_tcp_pose,
+    orientation_command_world_error,
+    position_command_world_error_exp,
+)
