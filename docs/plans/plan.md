@@ -503,6 +503,7 @@ steering_link → wheel;`cr10_Link1..5` → `cr10_joint2..6`;`cr10_Link6` → �
    已把 29 个固定关节(含 23 个无惯量的 TF frame link)压掉。
 
 ### 阶段 1 — 接入与注册
+
 4. 写 `ranger_cr10_articulation_cfg.py`:
    - 关节限位**严格取自 `rangercr10lidar.urdf`**(§2.2);
    - `effort_limit` 按 CR10 规格填(URDF 里是 0);`stiffness`/`damping` 起步值参照 GO2-PIPER 的 Piper;
@@ -583,19 +584,19 @@ steering_link → wheel;`cr10_Link1..5` → `cr10_joint2..6`;`cr10_Link6` → �
     `play.py`)。只看总误差无法区分"用了底盘"和"没用到但碰巧够着"。
 
 ### 阶段 4 — MuJoCo 部署
-11. 建 MJCF,写 `deploy_mujoco/ranger_cr10/`。**GO2-PIPER 那份不能照抄**:它写死了 18 维观测
+12. 建 MJCF,写 `deploy_mujoco/ranger_cr10/`。**GO2-PIPER 那份不能照抄**:它写死了 18 维观测
     和 12 个腿关节的 `ISAAC_TO_MUJOCO` 重排表。新脚本要:
     - 观测装配改为 **6 个臂关节 + 8 维动作**的布局(§3.3 / §4.3);
     - **策略输出的前两维 `(vx, wz)` 必须真的驱动底盘** —— MJCF 里用与 §4.1 同一套运动学解算,
       而不是像 GO2-PIPER 那样把底盘速度当成外部输入。
-12. **验收**:`play.py` 导出 `policy.pt`;键盘遥操作时给一个远端目标,
+13. **验收**:`play.py` 导出 `policy.pt`;键盘遥操作时给一个远端目标,
     确认**底盘会动起来**去够 —— 这是联合方案在 MuJoCo 里的最小证据。
 
 ### 阶段 5 — 实机接口对齐(不上机)
-13. 产出**"仿真 ↔ 实机"对照表**:每个观测分量/动作分量 → agx 的话题与字段,含单位、
+14. 产出**"仿真 ↔ 实机"对照表**:每个观测分量/动作分量 → agx 的话题与字段,含单位、
     频率、命名映射。用 `--export_io_descriptors`(`mdp/observations.py` 的 `generic_io_descriptor`
     与 `record_joint_names`)导出的布局描述作为抓手。
-14. **验收**:对照表与 agx 代码逐项核对通过;列出实机部署节点待办清单 ——
+15. **验收**:对照表与 agx 代码逐项核对通过;列出实机部署节点待办清单 ——
     **把策略前两维 `(vx, wz)` 发布到 `/cmd_vel`**(零阶保持)、
     关节名重映射(`joint1..6` ↔ `cr10_joint1..6`)、度/弧度换算、**臂指令 10 Hz**、
     `/cmd_vel` 看门狗(驱动无超时,停发即保持最后指令)、夹爪 0–1000 原始计数与反向映射、
