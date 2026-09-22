@@ -113,13 +113,19 @@ Artifacts (each verified by loading/playing it back, not by exit code):
 3. Compare the trained policy against `policy_pretrained.pt` under the same `config_wbc.yaml`.
 4. Decide the fate of the six gitignored `*_base.usd` assets (see PROCESS.md §3).
 5. **New platform**: the port plan for the wheeled `rangerboxcr10lidar` (AgileX Ranger 4WS/4WD +
-   Dobot CR10 + AG95) is at `docs/plans/plan.md`. **All 15 decisions are locked (2026-09-23);
-   stages 0 is done, stage 1 has not started.** Key locked decisions: base stays a `(vx, vy, wz)`
-   command (`/cmd_vel` is the chassis' only input) with arm-only action space; joint limits follow
-   `rangercr10lidar.urdf`; end-effector frame is the gripper fingertip centre; arm actions at 10 Hz
-   on both sides; conservative command ranges (±0.5 m/s, ±0.5 rad/s, no `vy`).
-   Four non-blocking items (its §9 R1–R4) are still open — most notably R1, whether the TCP
-   configured in the Dobot controller actually sits at the fingertip centre.
+   Dobot CR10 + AG95) is at `docs/plans/plan.md`. **Stage 0 is done; stage 1 has not started.**
+   The scheme was **revised on 2026-09-23**: the base is no longer an external velocity command.
+   The policy now outputs **8 dims — `[vx, wz, cr10_joint1..6]`** (`vx`, `wz` limited to ±0.5, no
+   `vy`), so RL decides the chassis motion and the arm together given an end-effector pose target;
+   the 8 chassis joints stay out of the action space and are resolved by a base controller in sim /
+   by the AgileX driver on the real robot (`/cmd_vel`), which keeps the two semantics identical.
+   Still locked: joint limits follow `rangercr10lidar.urdf`, end-effector frame is the gripper
+   fingertip centre, one unified 10 Hz policy (200 Hz physics, `decimation = 20`, base held
+   zero-order between policy steps). The speed-tracking rewards are dropped in favour of base
+   velocity and base action-rate penalties.
+   Open items are the plan's §9 R1–R5. **R5 is the consequential one**: the end-effector XY target
+   is currently body-frame, under which "targets that require driving the base" cannot exist at all,
+   so it must move to the world frame before the joint scheme can work.
 
    **Stage 0 (URDF→USD) complete**: `assets/ranger_cr10/` holds the conversion-only URDF, config,
    driver script and the USD (22 MB, kept as a regular Git object like the source meshes). Verified
