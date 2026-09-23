@@ -167,7 +167,7 @@ class BaseVelocityAction(ActionTerm):
         # wheels part-way radial, so they scrub instead of rolling -- measured as a spin of
         # 0.05 rad/s where 0.3 was asked for.
         steer_limit = torch.where(
-            spinning,
+            spinning.unsqueeze(1),  # (N,) -> (N, 1) so it broadcasts against the (N, W) steer
             torch.full_like(steer, self.cfg.max_spin_steer_angle),
             torch.full_like(steer, self.cfg.max_steer_angle),
         )

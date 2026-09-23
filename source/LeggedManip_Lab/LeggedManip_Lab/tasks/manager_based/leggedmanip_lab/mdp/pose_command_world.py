@@ -138,10 +138,19 @@ class UniformPoseWorldCommand(CommandTerm):
         # stays put while the robot moves, which is what lets the base make progress.
         self.target_pos_w[env_ids] = base_pos_w + quat_apply(base_quat_w, offset_b)
 
-        # orientation: point the tool at the target, then add bounded random tilt
-        dist_xy = torch.sqrt(offset_b[:, 0] ** 2 + offset_b[:, 1] ** 2)
-        pitch = -torch.atan2(offset_b[:, 2], dist_xy)
-        yaw = torch.atan2(offset_b[:, 1], offset_b[:, 0])
+        # Orientation: keep the attitude the tool already has, plus a bounded random tilt,
+        # then freeze that in the world.
+        #
+        # The earlier version derived pitch and yaw to "point the tool at the target",
+        # which quietly assumes the tool's forward axis is the chassis' +x. That holds for
+        # go2_piper's Piper but not for the CR10 with an AG95 on the flange: the commanded
+        # attitude ended up about 2.1 rad away from anything the arm could reach. Measured
+        # on a real run, the orientation error sat at 2.11 rad for 56 iterations -- its
+        # initial value -- while the policy paid -8.6 reward per step for it, dominating
+        # every other term. Anchoring on the tool's own attitude needs no hand-measured
+        # tool axis and is reachable by construction.
+        _, tcp_quat_w = tcp_pose_w(self.robot, self.body_idx)
+        tcp_quat_b = quat_mul(quat_conjugate(base_quat_w), tcp_quat_w[env_ids])
 
         roll_lim = torch.tensor(self.cfg.limit_ranges.roll, device=self.device)
         pitch_lim = torch.tensor(self.cfg.limit_ranges.pitch, device=self.device)
@@ -151,14 +160,14 @@ class UniformPoseWorldCommand(CommandTerm):
         euler = torch.stack(
             [
                 roll_lim[0] + rand_euler[:, 0] * (roll_lim[1] - roll_lim[0]),
-                pitch + pitch_lim[0] + rand_euler[:, 1] * (pitch_lim[1] - pitch_lim[0]),
-                yaw + yaw_lim[0] + rand_euler[:, 2] * (yaw_lim[1] - yaw_lim[0]),
+                pitch_lim[0] + rand_euler[:, 1] * (pitch_lim[1] - pitch_lim[0]),
+                yaw_lim[0] + rand_euler[:, 2] * (yaw_lim[1] - yaw_lim[0]),
             ],
             dim=-1,
         )
         euler = torch.clamp(euler, -3.14 / 4, 3.14 / 3)
         offset_quat = quat_from_euler_xyz(euler[:, 0], euler[:, 1], euler[:, 2])
-        self.target_quat_w[env_ids] = quat_mul(base_quat_w, offset_quat)
+        self.target_quat_w[env_ids] = quat_mul(base_quat_w, quat_mul(tcp_quat_b, offset_quat))
 
         # the command tensor must be valid immediately, not only after the next update
         self._update_command()
