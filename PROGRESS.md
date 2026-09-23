@@ -3,7 +3,7 @@
 A snapshot, not a log. Delete what is no longer true; do not append history here (that is
 PROCESS.md). Do not record unverified conclusions.
 
-**Last verified: 2026-09-22** — every claim below was produced by re-running the command on this
+**Last verified: 2026-09-23** — every claim below was produced by re-running the command on this
 machine, unless marked otherwise.
 
 ## Current objective
@@ -113,7 +113,7 @@ Artifacts (each verified by loading/playing it back, not by exit code):
 3. Compare the trained policy against `policy_pretrained.pt` under the same `config_wbc.yaml`.
 4. Decide the fate of the six gitignored `*_base.usd` assets (see PROCESS.md §3).
 5. **New platform**: the port plan for the wheeled `rangerboxcr10lidar` (AgileX Ranger 4WS/4WD +
-   Dobot CR10 + AG95) is at `docs/plans/plan.md`. **Stage 0 is done; stage 1 has not started.**
+   Dobot CR10 + AG95) is at `docs/plans/plan.md`. **Stages 0-3 are done; stages 4-5 (MuJoCo, real-robot alignment) have not started.**
    The scheme was **revised on 2026-09-23**: the base is no longer an external velocity command.
    The policy now outputs **8 dims — `[vx, wz, cr10_joint1..6]`** (`vx`, `wz` limited to ±0.5, no
    `vy`), so RL decides the chassis motion and the arm together given an end-effector pose target;
