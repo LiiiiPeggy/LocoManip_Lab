@@ -131,6 +131,30 @@ Artifacts (each verified by loading/playing it back, not by exit code):
    that require driving the base" exist at all.
    Remaining open items are the plan's §9 R1, R3 and R4 (TCP offset, success criteria, robot access).
 
+   **Stage 1-3 complete (2026-09-23).** The platform now trains end to end. Stage 1
+   (articulation + env cfgs + registration) and stage 2 (base controller) are done, and a
+   first WBC policy was trained: 2048 envs x 1000 iterations in 85 min, run
+   `logs/rsl_rl/ranger_cr10_wbc/2026-09-23_14-04-03/`, exported to `exported/policy.pt`
+   and `policy.onnx`, with a video at `videos/play/rl-video-step-0.mp4`.
+
+   Result: orientation error 1.06 -> 0.25 rad and mean reward -5.8 -> +32.4 over the run.
+   At the near-target regime the policy reaches **0.076 m position / 0.180 rad orientation**
+   error, and **freezing the base costs 60% more position error** (0.076 -> 0.122 m), so the
+   policy is genuinely using the chassis rather than the arm alone.
+
+   Honest limits: the command curriculum **stalled at 1.4 of its 3.0 m limit** -- the far
+   targets that most need base motion are not being reached yet, so more training or a
+   slower curriculum is needed. Yaw tracking also under-delivers in sim (about 40% of the
+   commanded rate, from tyre scrub at large steer angles), which matters for sim-to-real.
+
+   Stages 1-3 turned up nine defects that had to be fixed before training was meaningful;
+   they are documented in the plan's stage-1 and stage-2 notes and in the commit history.
+   Seven were measured, not inferred (friction/rolling resistance, per-wheel sign
+   convention, mimic constraints dropped by PhysX, reverse kinematics, steering sign,
+   branch-dependent steering clamp, and an unreachable orientation command that made the
+   reward mostly a constant penalty).
+
+
    **Stage 0 (URDF→USD) complete**: `assets/ranger_cr10/` holds the conversion-only URDF, config,
    driver script and the USD (22 MB, kept as a regular Git object like the source meshes). Verified
    by a printed joint table: 22 joints, correct parenting, arm limits equal to the URDF's.
