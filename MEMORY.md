@@ -55,9 +55,25 @@ from the exit status, and never infer "no work to do" from empty output.
 - The extension identity lives in `spec.kwargs["env_cfg_entry_point"]`, e.g.
   `…leggedmanip_lab.config.go2_piper.flat_env_cfg:Go2PiperFlatEnvCfg`.
 
-**Expected row count for `python scripts/list_envs.py`: 28** (7 platforms × Flat/WBC ×
+**Expected row count for `python scripts/list_envs.py`: 32** (8 platforms × Flat/WBC ×
 normal/`-Play`). Any other number means registration is broken. Assert the count — an empty table
 looks like "no data", not "broken filter".
+
+## Reading `Episode_Reward/*` without guessing the scale
+
+Isaac Lab's `RewardManager` accumulates `term_cfg.weight * term_cfg.func(...) * dt`, and the RSL-RL
+wrapper divides by `max_episode_length_s`. For an episode of `max_episode_length_s / dt` steps those
+cancel, so the logged value is exactly
+
+    Episode_Reward/<name> = weight * mean(term)
+
+Measured, not derived: `end_effector_orientation_tracking` at weight -4.0 with a mean quaternion
+error of 0.252 rad logs -1.048. The `* 10` and `/ 10` variants are both wrong, which is easy to get
+wrong because `Train/mean_reward` is a different normalisation again.
+
+The practical use is the reverse direction: a term whose mean is not logged (a speed, a distance)
+can be read back off its own curve by dividing by the weight — that is how the chassis creep was
+tracked mid-run before the acceptance test existed.
 
 ## Throughput scaling (RTX A6000 48 GB, GO2-PIPER-WBC)
 
@@ -122,3 +138,12 @@ while teleoperating.
   an import happens before `AppLauncher`.
 - **A run that "did nothing"** → empty `hydra.log` is normal (Hydra's launcher log is unused here);
   the real record is the run's `events.out.tfevents.*` and `params/`.
+- **A reward term that never fires.** Two independent ways, both seen on ranger_cr10: a threshold
+  above anything the robot reaches (`clamp(speed - 0.3, 0) ** 2` against a chassis that moves at
+  0.13 m/s), and an `exp(-d^2 / std^2)` kernel whose std is smaller than the distances the task
+  actually samples (dead past ~3 std, i.e. 0.75 m for std 0.316). Check the term's *magnitude* in
+  TensorBoard against its weight before believing it is doing anything.
+- **An action term that rails and cannot come back.** `clamp()` has zero derivative outside its
+  bounds, so a policy whose raw output drifts past the limit receives no gradient that could pull it
+  back and stays pinned forever. Measured here at 4x the limit. Squash with `tanh` instead of
+  clamping; check for it by logging the *raw* action next to the processed one.

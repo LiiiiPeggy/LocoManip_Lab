@@ -3,17 +3,20 @@
 A snapshot, not a log. Delete what is no longer true; do not append history here (that is
 PROCESS.md). Do not record unverified conclusions.
 
-**Last verified: 2026-09-23** — every claim below was produced by re-running the command on this
+**Last verified: 2026-10-09** — every claim below was produced by re-running the command on this
 machine, unless marked otherwise.
 
 ## Current objective
 
-Getting the repository's training pipeline running reliably at scale against **GO2-PIPER**, then
-producing a real WBC policy. A first policy now exists (below); the open work is verifying it end to
-end in MuJoCo and deciding how much further to train it.
+Two WBC policies on the wheeled **RangerBox-CR10** (AgileX Ranger 4WS/4WD + Dobot CR10 + AG95),
+kept on separate branches so they never share a task id, experiment name or log directory:
 
-*Inferred from repository evidence, not stated by the user — confirm or correct:*
-only `go2_piper_base.usd` is tracked in git, and every training run so far is `GO2-PIPER-WBC`.
+- `rangercr10-world` — an end-effector target frozen in the *world*; the policy decides `(vx, wz)`
+  itself. Stages 0-4 done and accepted (below); stages 5-6 (MuJoCo, real-robot alignment) not started.
+- `rangercr10-teleop` — a *body-relative* end-effector target plus a human velocity command, the
+  GO2-PIPER teleoperation shape. **Not created yet**; to be cut from the world branch.
+
+GO2-PIPER remains the reference implementation and its policy is still staged for MuJoCo (below).
 
 ## Verified working
 
@@ -58,9 +61,10 @@ experiment name (`go2_piper_wbc`).
 
 The working-tree change replaces the `spec.entry_point` check with
 `spec.kwargs["env_cfg_entry_point"]`. Measured over one live registry: old filter → **0** rows,
-new filter → **28** rows (7 platforms × Flat/WBC × normal/`-Play`).
+new filter → **28** rows at the time (7 platforms × Flat/WBC × normal/`-Play`); **32** now that
+rangercr10 is registered (8 platforms).
 
-**Status: committed on branch `rangercr10`.**
+**Status: committed on branch `rangercr10-world`.**
 
 ### First WBC policy trained, exported and staged for MuJoCo (2026-09-22)
 
@@ -96,9 +100,10 @@ Artifacts (each verified by loading/playing it back, not by exit code):
 
 1. The MuJoCo deployment path is still **untested end to end**. The policy file is in place and its
    I/O signature matches, but `go2_piper.py` has not yet been run against it.
-2. Local git history is a single `first commit` (`7ca5f66`). The upstream commit recorded in the
-   training logs (`8b817d7d23f0…`) exists as an object but is reachable from no ref, so comparing
-   against or rebasing onto upstream is no longer possible in this clone.
+2. `agx` (the real-robot ROS interface, a submodule) has an **uncommitted pointer move**
+   (`28beddb` → `505ae3c`) in the working tree. Left alone deliberately: it is the user's own
+   change, not this branch's. The training logs record the parent repo's diff, not the
+   submodule's, so a run cannot be reproduced from its recorded git state alone.
 3. `pre-commit` and `ruff` are not installed in `env_isaaclab5`, so the hooks in
    `.pre-commit-config.yaml` could not be run here; commits were checked by hand (trailing
    whitespace, final newline, the 5000 KB `check-added-large-files` limit) instead.
@@ -112,8 +117,14 @@ Artifacts (each verified by loading/playing it back, not by exit code):
    were still improving slowly at iteration 2 500.
 3. Compare the trained policy against `policy_pretrained.pt` under the same `config_wbc.yaml`.
 4. Decide the fate of the six gitignored `*_base.usd` assets (see PROCESS.md §3).
-5. **New platform**: the port plan for the wheeled `rangerboxcr10lidar` (AgileX Ranger 4WS/4WD +
-   Dobot CR10 + AG95) is at `docs/plans/plan.md`. **Stages 0-3 are done; stages 4-5 (MuJoCo, real-robot alignment) have not started.**
+5. **Create `rangercr10-teleop`** from the world branch's current tip and build the body-relative
+   teleoperation WBC there (plan.md section 7, and the task brief in the branch history). This is
+   the immediate next piece of work, not the world branch again.
+6. **New platform**: the port plan for the wheeled `rangerboxcr10lidar` (AgileX Ranger 4WS/4WD +
+   Dobot CR10 + AG95) is at `docs/plans/plan.md`. **Stages 0-4 are done; stages 5-6 (MuJoCo, real-robot alignment) have not started.**
+   The work lives on branch `rangercr10-world`; branch `rangercr10-teleop` (body-relative
+   teleoperation WBC) is to be cut from it and does not exist yet. The two are meant to be kept
+   apart by task id, experiment name, log directory and exported model.
    The scheme was **revised on 2026-09-23**: the base is no longer an external velocity command.
    The policy now outputs **8 dims — `[vx, wz, cr10_joint1..6]`** (`vx`, `wz` limited to ±0.5, no
    `vy`), so RL decides the chassis motion and the arm together given an end-effector pose target;
@@ -153,6 +164,39 @@ Artifacts (each verified by loading/playing it back, not by exit code):
    convention, mimic constraints dropped by PhysX, reverse kinematics, steering sign,
    branch-dependent steering clamp, and an unreachable orientation command that made the
    reward mostly a constant penalty).
+
+   **Stage 4 (stability and curriculum optimisation) complete (2026-10-09).** The task and
+   experiment were renamed for the branch split -- `RANGER-CR10-WORLD-WBC` /
+   `ranger_cr10_world` -- and the 2026-09-23 baseline stays under the old name, unreplayable
+   by design (its exported policy is 99-dim; the observation is now 108-dim).
+
+   Six defects, each pinned to a measurement, are in plan.md section 7 stage 4. The two that
+   mattered most: the base action was **hard-clamped** while the policy's raw output sat at
+   4x the limit, where `clamp` has zero derivative and the channel was therefore dead-locked
+   with no way back; and the position reward's `exp(-d^2 / 0.1)` kernel is dead past ~0.75 m,
+   while the mean distance to target was 1.06 m -- so far targets paid the same (nothing)
+   whether the policy drove to them or not.
+
+   Acceptance, three policies under identical frozen-target tests (`scripts/ranger_cr10/eval_world_wbc.py`):
+
+   | | baseline | optimised |
+   |---|---|---|
+   | position error, targets mean 1.99 m away | 0.0999 m | **0.0801 m** |
+   | far stratum (>1.15 m, 449/512) success | 94.95% | **95.99%** |
+   | envs within 5 cm | 122/512 | **306/512** |
+   | chassis linear rate once on target | 0.128 m/s | **0.0053 m/s** |
+   | chassis yaw rate once on target | 0.270 rad/s | **0.0158 rad/s** |
+   | position error with `(vx, wz)` forced to zero | 1.0493 m | 1.0578 m |
+
+   Freezing the base costs **13x** the position error, so the chassis is doing real work, not
+   decorating an arm that could reach anyway.
+
+   Honest limits: orientation ended **12% worse** (0.283 vs 0.252 rad) in both optimised runs,
+   most likely the linear distance term trading attitude for position -- recorded as a
+   deliberate trade, not hidden. The curriculum reached 1.35 of its 3.00 limit; it is still
+   advancing at the end (success rate 0.73 against a 0.60 promotion threshold) but the claim
+   supported by evidence is "96% success on targets well beyond the training box", not "the
+   curriculum is finished".
 
 
    **Stage 0 (URDF→USD) complete**: `assets/ranger_cr10/` holds the conversion-only URDF, config,
