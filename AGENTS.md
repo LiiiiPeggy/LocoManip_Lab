@@ -74,7 +74,7 @@ Inherited from [CONTRIBUTING.md](CONTRIBUTING.md) and `.pre-commit-config.yaml`;
 - There is no unit-test suite (`tests/` is gitignored). Verification means running the thing.
 - Smoke-test before any long run: `--num_envs 64 --max_iterations 3 --headless`.
 - Registration/env changes must be verified by listing environments and reading the **row count**
-  (expect **28**), not by "it imports".
+  (expect **32** = 8 platforms × Flat/WBC × normal/`-Play`), not by "it imports".
 - Report the exact command and its observed output. "Should work" is not a test result.
 - If a run's output is empty, say so explicitly rather than reporting success.
 
