@@ -159,10 +159,20 @@ RANGER_CR10_CFG = ArticulationCfg(
             effort_limit=WHEEL_EFFORT_LIMIT_NM,
             velocity_limit=20.0,
             stiffness=0.0,
-            # 20 gives 39 Nm at the commanded 1.96 rad/s, comfortably above the rolling
-            # resistance the contact patch produces (see the wheel material note in
-            # config/ranger_cr10/wbc_env_cfg.py)
-            damping=20.0,
+            # 60, not 20. There is no stiffness, so the tracking error is load_torque /
+            # damping, and at 20 the tyre load torque left a large steady-state droop.
+            # Measured commanded-vs-achieved base velocity at 200 Hz physics, sweeping
+            # only this gain (see docs/plans/plan.md section 7, stage 4):
+            #
+            #     damping    straight 0.3   turning (0.3, 0.3)   spin on the spot 0.3
+            #        20         0.82              0.78                   0.53
+            #        60         0.89              0.85                   0.84
+            #       150         1.18              1.00                   1.18  (unstable)
+            #
+            # 150 is past the stability limit at a 5 ms physics step: the wheel speeds
+            # then oscillate (measured 0.56 to 1.62 rad/s against a flat 1.96 target)
+            # rather than converging. 60 is the largest value that stays clean.
+            damping=60.0,
             armature=0.05,
             friction=0.02,
             min_delay=0,
