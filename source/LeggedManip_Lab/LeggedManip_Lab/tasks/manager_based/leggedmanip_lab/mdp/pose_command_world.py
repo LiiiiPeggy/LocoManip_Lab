@@ -88,6 +88,14 @@ class UniformPoseWorldCommand(CommandTerm):
         self.metrics["orientation_error"] = torch.zeros(self.num_envs, device=self.device)
         # distance from the chassis to the target: the quantity the base can actually reduce
         self.metrics["distance_to_target"] = torch.zeros(self.num_envs, device=self.device)
+        # 1 while the TCP is inside cfg.success_threshold, averaged per command by the
+        # accumulator below. Logged, so the curriculum's promotion condition is visible
+        # in TensorBoard instead of only inferable from the level readout.
+        self.metrics["success"] = torch.zeros(self.num_envs, device=self.device)
+
+        # running per-command success, reset whenever a new target is sampled
+        self._success_sum = torch.zeros(self.num_envs, device=self.device)
+        self._success_count = torch.zeros(self.num_envs, device=self.device)
 
     def __str__(self) -> str:
         msg = "UniformPoseWorldCommand:\n"
@@ -103,6 +111,16 @@ class UniformPoseWorldCommand(CommandTerm):
     def command(self) -> torch.Tensor:
         """Target pose relative to the chassis, ``(x, y, z, qw, qx, qy, qz)``."""
         return self.pose_command
+
+    @property
+    def success_rate(self) -> torch.Tensor:
+        """Fraction of steps since each env's target was sampled that were on target.
+
+        Per command rather than per episode on purpose: the episode is 20 s and a command
+        lives 8-10 s, so an episode-level rate would blend two different targets into one
+        number, which is exactly the ambiguity the curriculum must not have.
+        """
+        return self._success_sum / self._success_count.clamp(min=1.0)
 
     """
     Implementation specific functions.
@@ -169,6 +187,10 @@ class UniformPoseWorldCommand(CommandTerm):
         offset_quat = quat_from_euler_xyz(euler[:, 0], euler[:, 1], euler[:, 2])
         self.target_quat_w[env_ids] = quat_mul(base_quat_w, quat_mul(tcp_quat_b, offset_quat))
 
+        # a new target starts a new success measurement
+        self._success_sum[env_ids] = 0.0
+        self._success_count[env_ids] = 0.0
+
         # the command tensor must be valid immediately, not only after the next update
         self._update_command()
 
@@ -188,6 +210,11 @@ class UniformPoseWorldCommand(CommandTerm):
         self.metrics["position_error"] = torch.norm(tcp_pos_w - self.target_pos_w, dim=-1)
         self.metrics["orientation_error"] = quat_error_magnitude(tcp_quat_w, self.target_quat_w)
         self.metrics["distance_to_target"] = torch.norm(self.pose_command[:, :3], dim=-1)
+
+        success = (self.metrics["position_error"] < self.cfg.success_threshold).float()
+        self.metrics["success"] = success
+        self._success_sum += success
+        self._success_count += 1.0
 
     """
     Debug visualization

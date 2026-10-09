@@ -221,3 +221,64 @@ def pos_cmd_levels(
                         )
 
     return torch.tensor(ranges.pos_x[1], device=env.device)
+
+
+def world_pos_cmd_levels(
+    env,
+    env_ids: Sequence[int],
+    success_rate: float = 0.6,
+    command_name: str = "ee_pose",
+) -> torch.Tensor:
+    """Promote the world-target sampling box on measured task success.
+
+    A ranger_cr10-specific replacement for :func:`pos_cmd_levels`, which promotes when the
+    mean of the position-tracking *reward* exceeds 0.8 of its weight. That condition has
+    two problems for a target that the base has to drive to:
+
+    * the reward is an ``exp(-d^2 / 0.1)`` kernel, dead past about 0.75 m, so the mean
+      saturates as soon as the easy targets are solved and stops responding to the far
+      ones at all. The 2026-09-23 run sat at 3.52 against a threshold of 3.60 for 400
+      iterations -- pinned to the criterion, not improving towards it.
+    * a mean is not a success rate. It can be held up by the near half of the box while
+      the far half is untouched, which is precisely the failure being fixed.
+
+    Success rate answers the question the curriculum is actually asking -- has the policy
+    solved the box it has -- and it is scale-free, so it stays meaningful if the reward is
+    ever re-weighted. The per-stratum version of the same measurement is what the stage-4
+    acceptance test reports.
+
+    The default 0.6 is deliberately not 1.0: the far end of the box is sampled uniformly,
+    so some draws sit at the edge of what the arm can reach even after driving, and
+    demanding all of them would stall the curriculum on outliers.
+    """
+    cfg = env.command_manager.get_term(command_name).cfg
+
+    is_curriculum_enabled = getattr(cfg, "curriculum_enabled", False)
+    ranges = getattr(cfg, "ranges", None)
+    limit_ranges = getattr(cfg, "limit_ranges", None)
+
+    if not is_curriculum_enabled:
+        if ranges is not None and limit_ranges is not None:
+            cfg.ranges = limit_ranges
+        val = limit_ranges.pos_x[1] if limit_ranges is not None else 0.0
+        return torch.tensor(-1.0, device=env.device)
+
+    if ranges is None or limit_ranges is None or not hasattr(ranges, "pos_x"):
+        return torch.tensor(0.0, device=env.device)
+
+    # the promotion test is expensive to evaluate and the box only needs to move once per
+    # episode, so keep the original's episode-end gate
+    if (
+        env.common_step_counter > 0
+        and env.common_step_counter % env.max_episode_length == 0
+    ):
+        rate = env.command_manager.get_term(command_name).success_rate.mean().item()
+        if rate > success_rate:
+            pos_delta = torch.tensor([-0.05, 0.05], device=env.device)
+            ori_delta = torch.tensor([-3.14 / 18, 3.14 / 18], device=env.device)
+            for axis in ["pos_x", "pos_y", "pos_z"]:
+                _safe_update_range(ranges, limit_ranges, axis, pos_delta, env.device)
+            for axis in ["roll", "pitch", "yaw"]:
+                _safe_update_range(ranges, limit_ranges, axis, ori_delta, env.device)
+
+    return torch.tensor(ranges.pos_x[1], device=env.device)

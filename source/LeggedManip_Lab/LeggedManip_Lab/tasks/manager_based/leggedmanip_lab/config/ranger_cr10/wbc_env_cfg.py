@@ -119,17 +119,26 @@ class RangerWBCCommandsCfg:
 
 @configclass
 class RangerRewardsCfg(RewardsCfg):
-    """Shared rewards, with the legs/feet terms dropped and two chassis terms added."""
+    """Shared rewards, with the legs/feet terms dropped and three chassis terms added."""
 
-    base_speed_penalty = RewTerm(
-        func=mdp.base_speed_above_threshold_l2,
-        weight=-1.0,
-        params={"threshold": 0.3},
-    )
+    # No dead zone, and both channels -- see base_motion_penalty_l1 for why the threshold
+    # had to go, why the yaw rate is in the same term, and why this weight is deliberately
+    # small next to the tracking term.
+    base_speed_penalty = RewTerm(func=mdp.base_motion_penalty_l1, weight=-0.5)
+
     base_action_rate = RewTerm(
         func=mdp.base_velocity_rate_l2,
         weight=-0.1,
         params={"action_name": "base_vel"},
+    )
+
+    # Long-range complement to the exponentially-kerneled tracking reward, which is dead
+    # beyond about 0.75 m and therefore teaches nothing about driving to a far target.
+    # At -0.5 a target 2.5 m away costs 0.125 per step, a quarter of the tracking term's
+    # ceiling, which is a real gradient where the kernel has none.
+    ee_distance_shaping = RewTerm(
+        func=mdp.position_command_world_distance,
+        weight=-0.5,
     )
 
 
@@ -137,7 +146,9 @@ class RangerRewardsCfg(RewardsCfg):
 class RangerCurriculumCfg:
     """The velocity curricula are gone with the velocity command; the pose one remains."""
 
-    pos_cmd_levels = CurrTerm(func=mdp.pos_cmd_levels)  # type: ignore
+    # world_pos_cmd_levels rather than pos_cmd_levels: promotes on per-command success
+    # rate instead of on the mean of a saturating reward. See its docstring.
+    pos_cmd_levels = CurrTerm(func=mdp.world_pos_cmd_levels)  # type: ignore
 
 
 @configclass
@@ -202,6 +213,23 @@ class RangerCr10WBCEnvCfg(LeggedManipLabEnvCfg):
             # the base velocity command no longer exists; this term would raise at startup
             group.velocity_commands = None
 
+        # The chassis is an action, so the policy controls a velocity it cannot observe:
+        # the shared policy group has base_ang_vel but no base_lin_vel (it is critic-only).
+        # Measured on the 2026-09-23 baseline with the target frozen, the policy held the
+        # chassis at a steady 0.10 m/s creep while commanding 0.5, and the end-effector
+        # error stayed at 0.065 m because the arm was quietly rotating backwards to cancel
+        # the drift. Nothing in the observation said the robot was moving, so nothing could
+        # learn to stop it. The real chassis reports this over /odom (plan.md section 3,
+        # B3b), so this is not an observation the hardware cannot supply.
+        self.observations.policy.base_lin_vel = ObsTerm(
+            func=mdp.base_lin_vel,
+            scale=2.0,
+            # coarse on purpose: /odom differentiates position, so the real signal is not
+            # clean either. At this scale the uniform bound is 0.05 m/s, well under the
+            # 0.1 m/s creep this term exists to make visible.
+            noise=Unoise(n_min=-0.1, n_max=0.1),
+        )
+
         self.observations.critic.feet_contact = None
         self.observations.critic.ee_link0_rel_pose.params = {
             "asset_cfg": ee_cfg,
@@ -223,6 +251,11 @@ class RangerCr10WBCEnvCfg(LeggedManipLabEnvCfg):
         self.rewards.end_effector_orientation_tracking.func = mdp.orientation_command_world_error
         self.rewards.end_effector_orientation_tracking.weight = -4.0
         self.rewards.end_effector_orientation_tracking.params = {
+            "asset_cfg": ee_cfg,
+            "command_name": "ee_pose",
+        }
+
+        self.rewards.ee_distance_shaping.params = {
             "asset_cfg": ee_cfg,
             "command_name": "ee_pose",
         }

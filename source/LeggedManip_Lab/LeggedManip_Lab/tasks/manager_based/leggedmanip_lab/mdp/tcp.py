@@ -134,6 +134,39 @@ def position_command_world_error_exp(
     return torch.exp(-torch.sum(torch.square(tcp_pos_w - target_pos_w), dim=1) / (std**2))
 
 
+def position_command_world_distance(
+    env: ManagerBasedEnv,
+    command_name: str,
+    asset_cfg: SceneEntityCfg,
+    base_body_name: str = "base_link",
+) -> torch.Tensor:
+    """Raw distance from the TCP to the world-fixed target, for use with a negative weight.
+
+    :func:`position_command_world_error_exp` is the task reward, but on its own it cannot
+    teach the chassis to drive. Its kernel is ``exp(-d^2 / 0.1)``, i.e. a 0.316 m standard
+    deviation, which is numerically zero beyond roughly 0.75 m: at 1.0 m it is 4.5e-5 and
+    at 1.5 m it is 7e-10. A far target therefore pays the policy the same (nothing) whether
+    it drives towards it or away from it, and there is no gradient to learn from. Measured
+    on the 2026-09-23 baseline, the mean distance to target settled at 1.06 m -- inside
+    that blind region -- while the curriculum is built to sample targets up to 3 m away.
+
+    A linear term has a constant gradient at every distance, so it reaches where the
+    exponential cannot. Near the target it is deliberately negligible next to the kernel's
+    own slope (0.5 per metre against about 8.6 per metre at d = 0.1 m), so it extends the
+    reward's range without costing the final accuracy the frozen-base test measures.
+    """
+    asset: Articulation = env.scene[asset_cfg.name]
+    command = env.command_manager.get_command(command_name)
+
+    base_ids, _ = asset.find_bodies(base_body_name)
+    base_pos_w = asset.data.body_pos_w[:, base_ids[0]]
+    base_quat_w = asset.data.body_quat_w[:, base_ids[0]]
+    target_pos_w = base_pos_w + quat_apply(base_quat_w, command[:, :3])
+
+    tcp_pos_w, _ = tcp_pose_w(asset, asset_cfg.body_ids[0])
+    return torch.norm(tcp_pos_w - target_pos_w, dim=-1)
+
+
 def orientation_command_world_error(
     env: ManagerBasedEnv,
     command_name: str,

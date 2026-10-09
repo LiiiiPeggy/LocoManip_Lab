@@ -68,6 +68,9 @@ class UniformPoseWorldCommandCfg(UniformPoseCommandBaseCfg):
     link_name: str = "base_link"
     """Body the command is expressed relative to, and against which the target is frozen."""
     curriculum_enabled: bool = False
+    success_threshold: float = 0.15
+    """Position error below which a command counts as reached, for the success metric and
+    for the curriculum's promotion test."""
 
 
 # -- velocity

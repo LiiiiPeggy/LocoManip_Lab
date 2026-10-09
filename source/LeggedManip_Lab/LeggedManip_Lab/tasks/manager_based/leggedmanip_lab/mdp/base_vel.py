@@ -120,9 +120,19 @@ class BaseVelocityAction(ActionTerm):
     def process_actions(self, actions: torch.Tensor):
         self._prev_command[:] = self._command
         self._raw_actions[:] = actions
+
+        # Squashed with tanh rather than clamped, which is not cosmetic. A hard clamp has
+        # exactly zero derivative outside its limit, so a policy whose raw output has
+        # drifted past the limit can never be pulled back in by any gradient -- the
+        # channel dead-locks at the rail. Measured on the 2026-09-23 baseline policy
+        # (deterministic, target frozen): mean |wz| action 2.09 against a 0.5 limit, and
+        # mean |vx| 0.46 against the same limit. The chassis was commanded at full
+        # authority permanently, which is why it could not settle after reaching the
+        # target: it had no authority left in the other direction. tanh keeps the
+        # interval and the shape but never loses the gradient.
         low = torch.tensor(self.cfg.clip[0], device=self.device, dtype=torch.float32)
         high = torch.tensor(self.cfg.clip[1], device=self.device, dtype=torch.float32)
-        self._command[:] = torch.clamp(actions, min=low, max=high)
+        self._command[:] = (low + high) / 2 + (high - low) / 2 * torch.tanh(actions)
 
     def apply_actions(self):
         vx = self._command[:, 0]
@@ -187,26 +197,54 @@ class BaseVelocityAction(ActionTerm):
         if env_ids is None:
             self._raw_actions.zero_()
             self._command.zero_()
+            self._prev_command.zero_()
         else:
             self._raw_actions[env_ids] = 0.0
             self._command[env_ids] = 0.0
+            # or the first velocity_rate after a reset is measured against the value the
+            # previous episode happened to end on
+            self._prev_command[env_ids] = 0.0
 
 
-def base_speed_above_threshold_l2(
+def base_motion_penalty_l1(
     env: ManagerBasedRLEnv,
-    threshold: float = 0.3,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
 ) -> torch.Tensor:
-    """Penalise chassis ground speed, but only above ``threshold``.
+    """Penalise chassis motion with no dead zone, in both the linear and angular channel.
 
-    A plain L2 on base speed would fight the whole point of the joint scheme -- the
-    policy is supposed to drive the base. Thresholding keeps the penalty aimed at the
-    failure mode it is for (charging around, or twitching) without taxing the moderate
-    motion the task needs.
+    This replaces ``clamp(speed - 0.3, min=0) ** 2``, which was measured to be
+    identically zero in the regime it was written for: the baseline policy lets the
+    chassis creep at 0.13 m/s while holding the end effector on target (the arm quietly
+    rotates backwards to cancel the drift), and the threshold sat at 0.3 m/s, so nothing
+    in the reward preferred standing still to creeping. The threshold was there to avoid
+    taxing motion the task needs, but the tracking reward already pays for that motion;
+    this term's job is to break the tie once the target is reached, and a tie-breaker that
+    switches off exactly there cannot do it.
+
+    L1 rather than the squared form for the same reason: ``speed ** 2`` has zero gradient
+    at zero speed, so it does not actually pull a creeping policy back to a stop either.
+
+    The yaw rate is in here because the two channels turned out to fail the same way, and
+    fixing only the linear one did not fix the behaviour. Measured with a frozen target on
+    the policy trained against the linear-only version: 232 of 512 envs sat within 5 cm of
+    the target while the chassis still yawed at 0.241 rad/s, and 78% of them exceeded
+    0.05 rad/s. The arm absorbs a rotation exactly as it absorbs a translation, so the
+    tracking reward is blind to it; the chassis was pivoting under a held end effector.
+    Adding ``|wz|`` roughly doubles the term's value at the joint action limits, which is
+    why it is still one term rather than two separately weighted ones.
+
+    Weight it well below the position reward. Rewards are ``weight * term * dt`` with
+    ``dt = 0.1`` at the 10 Hz policy rate, so at weight -0.5 a fully railed ``(0.5 m/s,
+    0.5 rad/s)`` command costs 0.05 per step against the tracking term's 0.45 per step
+    ceiling -- about 11%, which cannot stop the chassis crossing two metres to reach a far
+    target, but does make creeping and pivoting strictly worse than holding still. It is a
+    tie-breaker, not the main fix: the channel could not command zero at all until the
+    ``tanh`` change, and the policy could not see that it was moving until ``base_lin_vel``
+    joined the observation.
     """
     asset: Articulation = env.scene[asset_cfg.name]
-    speed = torch.norm(asset.data.root_lin_vel_b[:, :2], dim=-1)
-    return torch.square(torch.clamp(speed - threshold, min=0.0))
+    linear = torch.norm(asset.data.root_lin_vel_b[:, :2], dim=-1)
+    return linear + torch.abs(asset.data.root_ang_vel_b[:, 2])
 
 
 def base_velocity_rate_l2(env: ManagerBasedRLEnv, action_name: str = "base_vel") -> torch.Tensor:
@@ -270,4 +308,10 @@ class BaseVelocityActionCfg(ActionTermCfg):
     """
 
     clip: tuple[tuple[float, float], tuple[float, float]] = ((-0.5, -0.5), (0.5, 0.5))
-    """Per-component ``(vx, wz)`` clamp, applied after scaling. Conservative by design."""
+    """Per-component ``(vx, wz)`` bounds, applied through a ``tanh`` squash.
+
+    Conservative by design, and reached asymptotically rather than by clamping -- see
+    :meth:`BaseVelocityAction.process_actions` for why the clamp had to go. Setting both
+    ends equal (as the fixed-base config does with ``((0, 0), (0, 0))``) still brakes the
+    chassis exactly.
+    """

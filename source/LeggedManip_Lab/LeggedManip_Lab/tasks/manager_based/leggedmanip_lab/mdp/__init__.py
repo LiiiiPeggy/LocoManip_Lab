@@ -31,7 +31,7 @@ from .pose_command_b import *
 from .base_vel import (  # noqa: F401
     BaseVelocityAction,
     BaseVelocityActionCfg,
-    base_speed_above_threshold_l2,
+    base_motion_penalty_l1,
     base_velocity_rate_l2,
 )
 from .pose_command_world import UniformPoseWorldCommand  # noqa: F401
@@ -41,5 +41,6 @@ from .tcp import (  # noqa: F401
     TCP_OFFSET_QUAT,
     end_effector_tcp_pose,
     orientation_command_world_error,
+    position_command_world_distance,
     position_command_world_error_exp,
 )
