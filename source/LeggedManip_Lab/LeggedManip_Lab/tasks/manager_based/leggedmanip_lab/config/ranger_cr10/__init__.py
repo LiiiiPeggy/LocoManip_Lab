@@ -15,9 +15,12 @@
 import gymnasium as gym
 from . import agents
 
-# WBC -- policy drives the Ranger chassis and the CR10 arm together
+# World WBC -- the policy drives the Ranger chassis and the CR10 arm together towards
+# an end-effector target that is frozen in the world. Branch `rangercr10-world`; the
+# body-relative teleoperation task lives on branch `rangercr10-teleop` and registers
+# its own ids, so the two branches never share a task name, experiment name or log dir.
 gym.register(
-    id="RANGER-CR10-WBC",
+    id="RANGER-CR10-WORLD-WBC",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
     kwargs={
@@ -27,7 +30,7 @@ gym.register(
 )
 
 gym.register(
-    id="RANGER-CR10-WBC-Play",
+    id="RANGER-CR10-WORLD-WBC-Play",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
     kwargs={

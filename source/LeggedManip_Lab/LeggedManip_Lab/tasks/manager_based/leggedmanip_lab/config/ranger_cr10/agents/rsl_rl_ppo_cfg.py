@@ -20,9 +20,10 @@ from isaaclab_rl.rsl_rl import (
     RslRlPpoAlgorithmCfg,
 )
 
-# WBC -- policy drives the Ranger chassis and the CR10 arm together.
-# The observation is 99-D and the action 8-D (docs/plans/plan.md section 4.3), so the
-# network is wider than input than go2_piper's; the hidden sizes are unchanged.
+# World WBC -- policy drives the Ranger chassis and the CR10 arm together.
+# The action is 8-D (docs/plans/plan.md section 4.3). The observation grew from 99-D to
+# 108-D when the policy group gained base_lin_vel -- 3 numbers, and the group keeps a
+# 3-step history (see wbc_env_cfg.py); the hidden sizes are unchanged from go2_piper's.
 @configclass
 class RangerCr10WBCPPORunnerCfg(RslRlOnPolicyRunnerCfg):
     num_steps_per_env = 24
@@ -30,7 +31,7 @@ class RangerCr10WBCPPORunnerCfg(RslRlOnPolicyRunnerCfg):
     max_iterations = 10000
     save_interval = 1000
 
-    experiment_name = "ranger_cr10_wbc"
+    experiment_name = "ranger_cr10_world"
     actor = RslRlMLPModelCfg(
         hidden_dims=[512, 256, 128],
         activation="elu",
@@ -72,7 +73,7 @@ class RangerCr10FlatPPORunnerCfg(RslRlOnPolicyRunnerCfg):
     max_iterations = 10000
     save_interval = 1000
 
-    experiment_name = "ranger_cr10_flat"
+    experiment_name = "ranger_cr10_world_flat"
     actor = RslRlMLPModelCfg(
         hidden_dims=[512, 256, 128],
         activation="elu",
