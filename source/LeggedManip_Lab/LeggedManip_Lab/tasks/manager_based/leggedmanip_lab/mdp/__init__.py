@@ -43,4 +43,6 @@ from .tcp import (  # noqa: F401
     orientation_command_world_error,
     position_command_world_distance,
     position_command_world_error_exp,
+    tcp_orientation_command_b_error,
+    tcp_position_command_b_error_exp,
 )

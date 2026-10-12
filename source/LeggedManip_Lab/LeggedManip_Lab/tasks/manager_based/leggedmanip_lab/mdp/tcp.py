@@ -108,6 +108,52 @@ def end_effector_tcp_pose(env: ManagerBasedEnv, asset_cfg: SceneEntityCfg, base_
     return torch.cat([pos_b, quat_b], dim=-1)
 
 
+def tcp_position_command_b_error_exp(
+    env: ManagerBasedEnv,
+    command_name: str,
+    std: float,
+    asset_cfg: SceneEntityCfg,
+    base_body_name: str = "base_link",
+) -> torch.Tensor:
+    """Reward TCP position tracking against a *chassis-relative* target.
+
+    The body-relative counterpart of :func:`position_command_world_error_exp`, used by the
+    teleoperation task. The comparison is done entirely in the chassis frame -- both the
+    command and the TCP pose are already expressed there -- so no world transform is
+    needed and the reward is invariant to the robot's heading. That invariance is the
+    whole point of a body-relative command: the same operator input means "the tool 40 cm
+    ahead of the chassis" whatever direction the chassis happens to be facing.
+
+    Uses the virtual TCP, not the flange, for the same reason the observation does: the
+    fingertip centre is the point the operator steers (see the module docstring). The
+    repo's ``position_command_b_error_exp`` cannot be reused -- it hardcodes ``link0`` as
+    the reference body, which does not exist here, and it compares the flange.
+    """
+    asset: Articulation = env.scene[asset_cfg.name]
+    command = env.command_manager.get_command(command_name)
+
+    base_ids, _ = asset.find_bodies(base_body_name)
+    tcp_pos_b, _ = tcp_pose_b(asset, asset_cfg.body_ids[0], base_ids[0])
+    # the command's quaternion block is not used here, so only the position is compared
+    return torch.exp(-torch.sum(torch.square(tcp_pos_b - command[:, :3]) / (std**2), dim=1))
+
+
+def tcp_orientation_command_b_error(
+    env: ManagerBasedEnv,
+    command_name: str,
+    asset_cfg: SceneEntityCfg,
+    base_body_name: str = "base_link",
+) -> torch.Tensor:
+    """TCP orientation error against a chassis-relative target, as a quaternion distance."""
+    asset: Articulation = env.scene[asset_cfg.name]
+    command = env.command_manager.get_command(command_name)
+
+    base_ids, _ = asset.find_bodies(base_body_name)
+    _, tcp_quat_b = tcp_pose_b(asset, asset_cfg.body_ids[0], base_ids[0])
+    # quat_error_magnitude takes |dot(q1, q2)|, so no sign normalisation is needed
+    return quat_error_magnitude(tcp_quat_b, command[:, 3:7])
+
+
 def position_command_world_error_exp(
     env: ManagerBasedEnv,
     command_name: str,

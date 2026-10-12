@@ -23,6 +23,11 @@ from isaaclab.envs.mdp.commands import (
 from ..pose_command_wbc import UniformPoseWBCCommand
 from ..pose_command_b import UniformBodyPoseCommand
 from ..pose_command_world import UniformPoseWorldCommand
+from ..pose_command_teleop import (
+    TCP_DEFAULT_POS_B,
+    TCP_DEFAULT_QUAT_B,
+    UniformTCPBodyPoseCommand,
+)
 
 # -- pose
 @configclass
@@ -36,6 +41,32 @@ class UniformPoseCommandCfg(UniformPoseCommandBaseCfg):
     """The range limit """
     curriculum_enabled: bool = False
     root_name: str = "link0"
+
+@configclass
+class UniformTCPBodyPoseCommandCfg(UniformPoseCommandCfg):
+    """Chassis-relative end-effector pose command, tracked at the virtual TCP.
+
+    ``root_name`` is what makes it chassis-relative; set it to ``base_link`` here rather
+    than the default ``link0``, which is the GO2-PIPER trunk and does not exist on this
+    robot. ``ranges`` are **offsets from the default TCP pose**, in the chassis frame, not
+    absolute poses -- see ``pose_command_teleop.py`` for why that is not a stylistic
+    choice. The reported error and the success metric are measured at the fingertip centre
+    instead of the flange.
+    """
+
+    class_type: type = UniformTCPBodyPoseCommand
+
+    default_pos_b: tuple[float, float, float] = TCP_DEFAULT_POS_B
+    """TCP position relative to ``root_name`` at the arm's authored default pose, metres."""
+
+    default_quat_b: tuple[float, float, float, float] = TCP_DEFAULT_QUAT_B
+    """TCP attitude relative to ``root_name`` at the arm's authored default pose, ``(w, x, y, z)``."""
+
+    success_threshold: float = 0.10
+    """Position error below which a command counts as reached. Tighter than the world
+    task's 0.15 m because a chassis-relative target is always inside the arm's own
+    workspace, so nothing here depends on how well the chassis drove."""
+
 
 @configclass
 class UniformPoseWBCCommandCfg(UniformPoseCommandBaseCfg):

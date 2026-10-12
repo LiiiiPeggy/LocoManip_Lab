@@ -39,6 +39,30 @@ gym.register(
     },
 )
 
+# Teleop -- body-relative end-effector target + a human velocity command, one 8-D policy.
+# Branch `rangercr10-teleop`. Distinct task ids, experiment names and log directories
+# from `RANGER-CR10-WORLD-WBC` on branch `rangercr10-world`, so the two can never be
+# confused in a log listing or an exported policy file.
+gym.register(
+    id="RANGER-CR10-TELEOP-WBC",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.teleop_env_cfg:RangerCr10TeleopEnvCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:RangerCr10TeleopPPORunnerCfg",
+    },
+)
+
+gym.register(
+    id="RANGER-CR10-TELEOP-WBC-Play",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.teleop_env_cfg:RangerCr10TeleopEnvCfg_PLAY",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:RangerCr10TeleopPPORunnerCfg",
+    },
+)
+
 # Flat -- fixed-base baseline, the chassis is braked
 gym.register(
     id="RANGER-CR10-Flat",

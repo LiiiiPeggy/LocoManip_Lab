@@ -65,6 +65,50 @@ class RangerCr10WBCPPORunnerCfg(RslRlOnPolicyRunnerCfg):
 
 
 
+# Teleop -- body-relative end-effector target plus a human velocity command.
+# Branch `rangercr10-teleop`; see teleop_env_cfg.py. Same 8-D action and the same
+# 512/256/128 network as the world task, so a difference in the results is a difference
+# in the task, not in the optimiser.
+@configclass
+class RangerCr10TeleopPPORunnerCfg(RslRlOnPolicyRunnerCfg):
+    num_steps_per_env = 24
+    check_for_nan = True
+    max_iterations = 10000
+    save_interval = 1000
+
+    experiment_name = "ranger_cr10_teleop"
+    actor = RslRlMLPModelCfg(
+        hidden_dims=[512, 256, 128],
+        activation="elu",
+        distribution_cfg=RslRlMLPModelCfg.GaussianDistributionCfg(
+            init_std=1.0,
+            std_type="log",
+        ),
+    )
+    critic = RslRlMLPModelCfg(
+        hidden_dims=[512, 256, 128],
+        activation="elu",
+        distribution_cfg=RslRlMLPModelCfg.GaussianDistributionCfg(
+            init_std=1.0,
+            std_type="log",
+        ),
+    )
+    algorithm = RslRlPpoAlgorithmCfg(
+        value_loss_coef=1.0,
+        use_clipped_value_loss=True,
+        clip_param=0.2,
+        entropy_coef=0.005,
+        num_learning_epochs=5,
+        num_mini_batches=4,
+        learning_rate=5e-4,
+        schedule="adaptive",
+        gamma=0.99,
+        lam=0.95,
+        desired_kl=0.01,
+        max_grad_norm=1.0,
+    )
+
+
 # Flat -- fixed-base baseline (the chassis is braked).
 @configclass
 class RangerCr10FlatPPORunnerCfg(RslRlOnPolicyRunnerCfg):
