@@ -97,6 +97,13 @@ CR10 模型、虚拟 TCP 定义、`mdp/tcp.py` 的 TCP 工具函数。
 结果训练期无法分通道诊断(只在验收时才靠直接测量拆开)。这里线/角从奖励项到
 `UniformVelocityCommand` 自带的 `error_vel_xy` / `error_vel_yaw` 两个指标都是分开的。
 
+> ⚠️ **读 `Metrics/base_velocity/error_vel_*` 时必须知道的量纲**:它按
+> `err / max_command_step` 逐累计加,而 `max_command_step = resampling_time_range[1]/step_dt = 80`,
+> **只在 episode 结束重置时清零** —— `CommandTerm._resample`(中途换命令)并不清零。
+> 所以读数是 `(已过步数 / 80) × 平均误差`,一个完整 episode(200 步)下约为真实平均误差的 **2.5 倍**。
+> 实测交叉验证:iter 30 时该读数 0.347 / 0.444,而由 `track_lin_vel_xy_exp`(3.16/3.5)反推的核值
+> 给出真实误差 ≈ 0.16 / 0.18,正好是 2.5 倍关系。**验收脚本用直接测量,不用这个指标。**
+
 课程:速度命令范围 `±0.25 → ±0.5`(复用 `lin_vel_cmd_levels` / `ang_vel_cmd_levels`);
 EE 目标盒**先固定**在保守范围,不加课程 —— 它本来就在机械臂工作空间内,要不要放宽是
 "臂能够多远"的问题,不是"底盘能不能开过去"的问题,等有了分层成功率数据再说。
