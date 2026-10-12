@@ -171,12 +171,24 @@ BOTH = [(0.25, 0.0, (0.10, 0.0, 0.0)), (0.25, 0.25, (0.0, 0.12, 0.0)),
 mode_c = run(BOTH, decoupled=False, label="C")
 decoup = run(BOTH, decoupled=True, label="D")
 
+# -- mode A again, decoupled: does the policy spend any velocity authority on the arm? --
+# The joint scheme's whole justification is that it can trade a little chassis tracking
+# for arm performance. If it does, its EE error under chassis motion should be lower
+# than the decoupled controller's at a slightly higher velocity error.
+mode_a_dec = run(
+    [(0.0, 0.0, HOLD), (0.25, 0.0, HOLD), (0.25, 0.25, HOLD), (0.0, 0.25, HOLD),
+     (-0.25, 0.0, HOLD), (0.0, -0.25, HOLD), (0.0, 0.0, HOLD)],
+    decoupled=True,
+    label="A-decoupled",
+)
+
 hdr = f"{'mode':<26}{'线速度误差':>12}{'角速度误差':>12}{'EE 位置':>10}{'EE 姿态':>10}" \
       f"{'成功率':>9}{'底盘速度':>10}{'目标漂移':>10}{'动作平滑':>10}"
 print(hdr)
 print("-" * len(hdr))
 for name, m in (("A 只控制底盘", mode_a), ("B 只控制末端", mode_b),
-                ("C 同时控制", mode_c), ("解耦基线 (同 C 命令)", decoup)):
+                ("C 同时控制", mode_c), ("C 的解耦基线", decoup),
+                ("A 的解耦基线", mode_a_dec)):
     print(f"{name:<26}{m['lin_err']:>12.4f}{m['ang_err']:>12.4f}{m['pos_err']:>10.4f}"
           f"{m['ori_err']:>10.4f}{m['success']:>9.2%}{m['base_spd']:>10.4f}"
           f"{m['tgt_drift']:>10.2e}{m['smooth']:>10.4f}")
@@ -186,6 +198,9 @@ print(f"  A 的目标漂移必须为 0 (底盘动而机身系目标不变): {mod
 print(f"  B 的底盘速度必须接近 0 (只动末端时底盘该静止): {mode_b['base_spd']:.4f} m/s")
 print(f"  解耦基线 vs C: 线速度误差 {decoup['lin_err']:.4f} vs {mode_c['lin_err']:.4f}, "
       f"EE 位置 {decoup['pos_err']:.4f} vs {mode_c['pos_err']:.4f}")
+print(f"  解耦基线 vs A: 线速度误差 {mode_a_dec['lin_err']:.4f} vs {mode_a['lin_err']:.4f}, "
+      f"EE 位置 {mode_a_dec['pos_err']:.4f} vs {mode_a['pos_err']:.4f}, "
+      f"成功率 {mode_a_dec['success']:.2%} vs {mode_a['success']:.2%}")
 
 env.close()
 app.close()
