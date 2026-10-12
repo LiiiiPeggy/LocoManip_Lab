@@ -3,7 +3,7 @@
 A snapshot, not a log. Delete what is no longer true; do not append history here (that is
 PROCESS.md). Do not record unverified conclusions.
 
-**Last verified: 2026-10-09** — every claim below was produced by re-running the command on this
+**Last verified: 2026-10-12** — every claim below was produced by re-running the command on this
 machine, unless marked otherwise.
 
 ## Current objective
@@ -14,7 +14,8 @@ kept on separate branches so they never share a task id, experiment name or log 
 - `rangercr10-world` — an end-effector target frozen in the *world*; the policy decides `(vx, wz)`
   itself. Stages 0-4 done and accepted (below); stages 5-6 (MuJoCo, real-robot alignment) not started.
 - `rangercr10-teleop` — a *body-relative* end-effector target plus a human velocity command, the
-  GO2-PIPER teleoperation shape. **Not created yet**; to be cut from the world branch.
+  GO2-PIPER teleoperation shape. **Trained and accepted** (stages 4.1-4.4 below); the keyboard
+  controller and MuJoCo deployment are not written yet.
 
 GO2-PIPER remains the reference implementation and its policy is still staged for MuJoCo (below).
 
@@ -117,10 +118,22 @@ Artifacts (each verified by loading/playing it back, not by exit code):
    were still improving slowly at iteration 2 500.
 3. Compare the trained policy against `policy_pretrained.pt` under the same `config_wbc.yaml`.
 4. Decide the fate of the six gitignored `*_base.usd` assets (see PROCESS.md §3).
-5. **Create `rangercr10-teleop`** from the world branch's current tip and build the body-relative
-   teleoperation WBC there (plan.md section 7, and the task brief in the branch history). This is
-   the immediate next piece of work, not the world branch again.
-6. **New platform**: the port plan for the wheeled `rangerboxcr10lidar` (AgileX Ranger 4WS/4WD +
+5. **Continue `rangercr10-teleop`**: the keyboard controller (task 4.5) and MuJoCo deployment
+   (4.6) are the remaining pieces of the current phase; see the entry below.
+6. **`rangercr10-teleop`**: the plan is `docs/plans/teleop_plan.md`. Stages 4.1 (environment +
+   six-check acceptance), 4.2 (training, 2048 envs x 1000 iterations in 105 min), 4.3 (three-mode
+   acceptance) and 4.4 (decoupled-baseline control group) are done. Still open: 4.5 keyboard
+   teleoperation (`WASDQE` + `IJKLUO123456`) and 4.6 MuJoCo deployment.
+   Run `logs/rsl_rl/ranger_cr10_teleop/2026-10-12_20-14-23/`; EE position error 0.189 -> 0.081 m,
+   orientation 0.649 -> 0.096 rad, linear velocity error 0.855 -> 0.074 m/s, no falls.
+   Acceptance: chassis-only success 100% with the body-relative target unchanged to 0.0 while the
+   chassis drove 0.6 m; arm-only leaves the chassis at 0.0038 m/s; both-together succeeds 78.9%.
+   **The decoupled control group is a tie**, reported as such: with a body-relative target the
+   chassis cannot help the arm's task, so there is nothing for the joint policy to trade -- see
+   teleop_plan.md section 4.3. Two honest regressions are recorded there too: position accuracy
+   was traded for orientation after iteration 300, and the arm-only success rate is the lowest of
+   the three modes at 83%.
+7. **New platform**: the port plan for the wheeled `rangerboxcr10lidar` (AgileX Ranger 4WS/4WD +
    Dobot CR10 + AG95) is at `docs/plans/plan.md`. **Stages 0-4 are done; stages 5-6 (MuJoCo, real-robot alignment) have not started.**
    The work lives on branch `rangercr10-world`; branch `rangercr10-teleop` (body-relative
    teleoperation WBC) is to be cut from it and does not exist yet. The two are meant to be kept
