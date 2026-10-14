@@ -3,7 +3,7 @@
 A snapshot, not a log. Delete what is no longer true; do not append history here (that is
 PROCESS.md). Do not record unverified conclusions.
 
-**Last verified: 2026-10-12** — every claim below was produced by re-running the command on this
+**Last verified: 2026-10-14** — every claim below was produced by re-running the command on this
 machine, unless marked otherwise.
 
 ## Current objective
@@ -130,7 +130,19 @@ Artifacts (each verified by loading/playing it back, not by exit code):
    chassis drove 0.6 m; arm-only leaves the chassis at 0.0038 m/s; both-together succeeds 78.9%.
    **The decoupled control group is a tie**, reported as such: with a body-relative target the
    chassis cannot help the arm's task, so there is nothing for the joint policy to trade -- see
-   teleop_plan.md section 4.3. Two honest regressions are recorded there too: position accuracy
+   teleop_plan.md section 4.3.
+   **Stage 4.5b (2026-10-14)**: the policy tracks commanded tool attitude almost not at all
+   (a 0.2 rad yaw command produces 0.013 rad of motion and essentially no joint movement).
+   IK on the URDF chain, with the simulator's joint limits and twelve restarts, shows every
+   commanded attitude **is** reachable -- 34/34 single-axis targets, 6/8 box corners, most
+   needing only 0.03-0.43 rad of joint travel -- and so is the tool-axis alternative, so the
+   definition is not the problem. The observation carries the command bit-for-bit, commands
+   resample at the configured 4-8 s, and reward and command share their frame transform.
+   **Verdict: case B (reachable, verification correct) -- a learning problem, not geometry.**
+   Two things to measure before any retrain: the attitude reward is an unbounded linear term
+   where every other term is an exp kernel, and exploration ends at std 0.13. See
+   teleop_plan.md section 5, including the correction that an earlier claim in this branch --
+   "the URDF chain does not match the simulator" -- was a measurement error, not a finding. Two honest regressions are recorded there too: position accuracy
    was traded for orientation after iteration 300, and the arm-only success rate is the lowest of
    the three modes at 83%.
 7. **New platform**: the port plan for the wheeled `rangerboxcr10lidar` (AgileX Ranger 4WS/4WD +
