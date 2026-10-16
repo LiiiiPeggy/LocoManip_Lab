@@ -3,7 +3,7 @@
 A snapshot, not a log. Delete what is no longer true; do not append history here (that is
 PROCESS.md). Do not record unverified conclusions.
 
-**Last verified: 2026-10-14** — every claim below was produced by re-running the command on this
+**Last verified: 2026-10-16** — every claim below was produced by re-running the command on this
 machine, unless marked otherwise.
 
 ## Current objective
@@ -139,10 +139,16 @@ Artifacts (each verified by loading/playing it back, not by exit code):
    definition is not the problem. The observation carries the command bit-for-bit, commands
    resample at the configured 4-8 s, and reward and command share their frame transform.
    **Verdict: case B (reachable, verification correct) -- a learning problem, not geometry.**
-   Two things to measure before any retrain: the attitude reward is an unbounded linear term
-   where every other term is an exp kernel, and exploration ends at std 0.13. See
-   teleop_plan.md section 5, including the correction that an earlier claim in this branch --
-   "the URDF chain does not match the simulator" -- was a measurement error, not a finding. Two honest regressions are recorded there too: position accuracy
+   **Stage 4.5c (2026-10-16)**: the fault is the actor, and three of the four candidates are
+   ruled out by measurement. An IK-oracle test shows the reward strictly prefers the IK
+   solution (+0.19 to +0.79 per step), driving the IK solution through the ordinary action
+   interface reaches 13/13 targets, and the policy *does* respond to attitude commands with
+   the right joints -- but ~40 degrees off in direction and only 27-84% of the required
+   magnitude. A 200-iteration resume improved the distribution-average error by 8.6% while
+   moving the local response by <=2%, so "train longer" is not supported either. **No task
+   configuration was changed** (`git diff --name-only` touches only docs/ and new scripts).
+   See teleop_plan.md section 6. The earlier claim that the reward implied a 0.477 rad
+   attitude error was my own cross-run mix-up -- the two error measures agree to 0.998. Two honest regressions are recorded there too: position accuracy
    was traded for orientation after iteration 300, and the arm-only success rate is the lowest of
    the three modes at 83%.
 7. **New platform**: the port plan for the wheeled `rangerboxcr10lidar` (AgileX Ranger 4WS/4WD +
