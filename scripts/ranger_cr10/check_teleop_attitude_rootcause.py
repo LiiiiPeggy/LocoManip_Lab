@@ -371,12 +371,15 @@ for col, axis in enumerate((0, 1, 2)):
     rpy_p[axis] = +0.1
     rpy_m = [0.0, 0.0, 0.0]
     rpy_m[axis] = -0.1
+    # observe() outside inference_mode: see check_teleop_attitude_mismatch.actor_arm_action
     set_command(tuple(rpy_p))
+    op = observe()
     with torch.inference_mode():
-        ap = net(observe())[0, 2:].cpu().numpy()
+        ap = net(op)[0, 2:].cpu().numpy()
     set_command(tuple(rpy_m))
+    om = observe()
     with torch.inference_mode():
-        am = net(observe())[0, 2:].cpu().numpy()
+        am = net(om)[0, 2:].cpu().numpy()
     J[:, col] = (ap - am) / 0.2
 print(f"  {'关节':<14}{'∂/∂roll':>12}{'∂/∂pitch':>12}{'∂/∂yaw':>12}   (动作单位 / rad)")
 for i, nm in enumerate(ARM_JOINT_NAMES):

@@ -170,6 +170,83 @@ def jacobian(q, eps=1e-6):
     return J
 
 
+def exp_so3(v):
+    """Rodrigues: a rotation vector to a rotation matrix."""
+    v = np.asarray(v, float)
+    ang = float(np.linalg.norm(v))
+    if ang < 1e-12:
+        return np.eye(3)
+    return axis_matrix(v / ang, ang)
+
+
+def local_ik(q_start, target_p, target_R, steps=40, dls_iters=6, lam=0.05,
+             step_cap=0.08, tol=1e-5, norm="l2", irls_eps=0.02):
+    """Differential IK that walks to the target instead of jumping to a branch.
+
+    This exists because every global solver in this module has been unreliable in the same
+    way: damped least squares from a handful of restarts lands on whichever arm branch it
+    finds first, and for this robot that meant the '+' attitudes came out needing 9.5 rad of
+    joint travel against 0.2-0.9 for the '-'. Any measurement that uses such a solution as
+    "the" reference measures the branch lottery, not the policy.
+
+    So: interpolate the *goal pose* from the current one in `steps` increments -- linearly in
+    position, `exp(t*log(dR))*R0` in rotation, so the rotation error is also interpolated in
+    the base frame, matching the Jacobian -- and run a few DLS iterations at each increment
+    with a small step cap. Continuity is structural: every increment starts where the last
+    one ended, so the arm cannot hop to another branch without walking there.
+
+    `norm="l1"` swaps the per-step inverse for an iteratively-reweighted one, which
+    approximates the solution that minimises the *sum of absolute* joint motion instead of
+    its Euclidean norm. That matters here because the reward penalises `sum |q - q_default|`
+    -- an L1 cost -- and an L1-optimal joint motion generally points in a different direction
+    from an L2-optimal one. Comparing the two against the actor's response is how section E
+    tests whether the deviation penalty is what rotates the policy's answer.
+
+    Returns (q, pos_err, rot_err, max_dq, cond) where the residuals are FK'd back against the
+    *final* target and max_dq is the largest single DLS step taken (a branch jump would show
+    up here as a step far larger than step_cap).
+    """
+    q = np.asarray(q_start, float).copy()
+    T0 = fk(q)
+    p0, R0 = T0[:3, 3], T0[:3, :3]
+    dR = log_R(target_R @ R0.T)          # rotation vector, base frame, R0 -> target
+    dp = np.asarray(target_p, float) - p0
+    max_dq = 0.0
+    cond = float("nan")
+    dq_prev = np.full(len(q), 0.1)   # IRLS seed: a uniform, non-zero motion
+    for k in range(1, steps + 1):
+        t = k / steps
+        p_t = p0 + t * dp
+        R_t = exp_so3(t * dR) @ R0
+        for _ in range(dls_iters):
+            T = fk(q)
+            e = np.concatenate([p_t - T[:3, 3], log_R(R_t @ T[:3, :3].T)])
+            if np.linalg.norm(e) < tol:
+                break
+            J = jacobian(q)
+            if norm == "l1":
+                # IRLS: weight joint i by 1/(|dq_i| + eps) so the quadratic surrogate
+                # approximates sum|dq_i|. A Newton-like weighting, one update per DLS step.
+                w = 1.0 / (np.abs(dq_prev) + irls_eps)
+                W = np.diag(w)
+                Winv = np.diag(1.0 / w)
+                dq = Winv @ J.T @ np.linalg.solve(J @ Winv @ J.T + (lam**2) * np.eye(6), e)
+                dq_prev = dq.copy()
+            else:
+                dq = J.T @ np.linalg.solve(J @ J.T + (lam**2) * np.eye(6), e)
+            n = np.linalg.norm(dq)
+            if n > step_cap:
+                dq *= step_cap / n
+            q = np.clip(q + dq, LIMITS[:, 0], LIMITS[:, 1])
+            max_dq = max(max_dq, float(np.linalg.norm(dq)))
+    cond = float(np.linalg.cond(jacobian(q)))
+    T = fk(q)
+    return (q,
+            float(np.linalg.norm(np.asarray(target_p, float) - T[:3, 3])),
+            float(np.linalg.norm(log_R(target_R @ T[:3, :3].T))),
+            max_dq, cond)
+
+
 def ik(target_p, target_R, q_init, iters=200, lam=0.03, step_cap=0.2):
     """Damped least squares with joint clipping. Returns (pos_err, rot_err, q)."""
     q = np.asarray(q_init, float).copy()
