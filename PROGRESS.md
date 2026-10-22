@@ -3,7 +3,7 @@
 A snapshot, not a log. Delete what is no longer true; do not append history here (that is
 PROCESS.md). Do not record unverified conclusions.
 
-**Last verified: 2026-10-16** — every claim below was produced by re-running the command on this
+**Last verified: 2026-10-22** — every claim below was produced by re-running the command on this
 machine, unless marked otherwise.
 
 ## Current objective
@@ -148,7 +148,19 @@ Artifacts (each verified by loading/playing it back, not by exit code):
    moving the local response by <=2%, so "train longer" is not supported either. **No task
    configuration was changed** (`git diff --name-only` touches only docs/ and new scripts).
    See teleop_plan.md section 6. The earlier claim that the reward implied a 0.477 rad
-   attitude error was my own cross-run mix-up -- the two error measures agree to 0.998. Two honest regressions are recorded there too: position accuracy
+   attitude error was my own cross-run mix-up -- the two error measures agree to 0.998.
+   **Stage 4.5d (2026-10-22)** rebuilt the IK reference as a continuous local solve (FK
+   residuals 1e-6, no branch jumps) and re-measured over six configurations: the actor's
+   joint-space response has a **median 40.9 deg direction error with std 3.9 deg**, constant
+   across command magnitude, axis and configuration, and a gain of 0.397 (0.80 for roll,
+   0.38 for pitch/yaw). Task-space interventions settle that **aim, not gain, is the
+   defect** -- scaling the response up makes the residual worse (12.6 -> 15.9 deg). Three
+   explanations are rejected by measurement: arm_deviation (L1 and L2 optima differ by
+   1.2 deg), the axis convention (actor is 40 deg from chassis-axis IK, 126 deg from
+   tool-axis), and command distribution (test targets sit in the *easy* 5% tail). An offline
+   supervised fit of the same map with the same inputs and architecture is **1.94x closer**
+   than the PPO actor (0.129 vs 0.249 rad/joint), so the next change is **auxiliary supervised
+   IK guidance**, not reward reweighting, not longer training, and not a wider network. Two honest regressions are recorded there too: position accuracy
    was traded for orientation after iteration 300, and the arm-only success rate is the lowest of
    the three modes at 83%.
 7. **New platform**: the port plan for the wheeled `rangerboxcr10lidar` (AgileX Ranger 4WS/4WD +
