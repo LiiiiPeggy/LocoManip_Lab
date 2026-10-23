@@ -50,6 +50,9 @@ gym.register(
     kwargs={
         "env_cfg_entry_point": f"{__name__}.teleop_env_cfg:RangerCr10TeleopEnvCfg",
         "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:RangerCr10TeleopPPORunnerCfg",
+        # stage 4.5e variant C, selected with `--agent ik_aux_cfg_entry_point`; the default
+        # key above is untouched, so existing runs behave exactly as before
+        "ik_aux_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:RangerCr10TeleopIKAuxPPORunnerCfg",
     },
 )
 

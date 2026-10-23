@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
+
 from isaaclab.utils import configclass
 
 from isaaclab_rl.rsl_rl import (
@@ -135,6 +137,41 @@ class RangerCr10FlatPPORunnerCfg(RslRlOnPolicyRunnerCfg):
         ),
     )
     algorithm = RslRlPpoAlgorithmCfg(
+        value_loss_coef=1.0,
+        use_clipped_value_loss=True,
+        clip_param=0.2,
+        entropy_coef=0.005,
+        num_learning_epochs=5,
+        num_mini_batches=4,
+        learning_rate=5e-4,
+        schedule="adaptive",
+        gamma=0.99,
+        lam=0.95,
+        desired_kl=0.01,
+        max_grad_norm=1.0,
+    )
+
+
+# ---------------------------------------------------------------------------------------
+# Stage 4.5e variant C: the same PPO plus a supervised term toward the local-IK teacher.
+# Everything else is copied from RangerCr10TeleopPPORunnerCfg so that A, B and C differ only
+# in the supervision mechanism. Registered under its own agent entry point on the SAME task
+# id, so the default `rsl_rl_cfg_entry_point` keeps behaving exactly as before.
+# ---------------------------------------------------------------------------------------
+@configclass
+class RangerCr10TeleopIKAuxAlgorithmCfg(RslRlPpoAlgorithmCfg):
+    class_name: str = "LeggedManip_Lab.ik_aux_ppo:PPOWithIKAux"
+    ik_aux_coef: float = 0.5
+    """Weight on MSE(actor mean, teacher) over the six arm channels. Chosen so the term is
+    comparable to the surrogate at the start of training rather than dominating it."""
+    ik_teacher_path: str = os.environ.get("IK_TEACHER_PATH", "logs/ik_teacher/teacher.pt")
+    """Produced by scripts/ranger_cr10/teleop_ik_teacher.py. Repo-relative, which is what
+    train.py's working directory is; override with IK_TEACHER_PATH if it lives elsewhere."""
+
+
+@configclass
+class RangerCr10TeleopIKAuxPPORunnerCfg(RangerCr10TeleopPPORunnerCfg):
+    algorithm = RangerCr10TeleopIKAuxAlgorithmCfg(
         value_loss_coef=1.0,
         use_clipped_value_loss=True,
         clip_param=0.2,
