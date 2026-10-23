@@ -3,7 +3,7 @@
 A snapshot, not a log. Delete what is no longer true; do not append history here (that is
 PROCESS.md). Do not record unverified conclusions.
 
-**Last verified: 2026-10-22** — every claim below was produced by re-running the command on this
+**Last verified: 2026-10-23** — every claim below was produced by re-running the command on this
 machine, unless marked otherwise.
 
 ## Current objective
@@ -160,7 +160,21 @@ Artifacts (each verified by loading/playing it back, not by exit code):
    tool-axis), and command distribution (test targets sit in the *easy* 5% tail). An offline
    supervised fit of the same map with the same inputs and architecture is **1.94x closer**
    than the PPO actor (0.129 vs 0.249 rad/joint), so the next change is **auxiliary supervised
-   IK guidance**, not reward reweighting, not longer training, and not a wider network. Two honest regressions are recorded there too: position accuracy
+   IK guidance**, not reward reweighting, not longer training, and not a wider network.
+   **Stage 4.5e (2026-10-23)** ran that as three controlled 200-iteration runs. The IK teacher
+   is excellent on held-out episodes (0.0046 rad joint MAE, 1.9 deg, 3 mm/0.31 deg task space)
+   and its labels are continuous (0.0000 rad) and executable (6/6 through the action
+   interface); supervised pre-training of the actor reaches 0.0054 rad / 0.5 deg offline. But
+   **the improvement does not transfer to task space**: the residual in the FK intervention test
+   is 12.9/9.3/9.1 deg for A, 12.9/10.6/9.1 for B and 14.2/10.5/8.7 for C, and the closed-loop
+   attitude error under a 0.15 rad command is unchanged (0.1449/0.1428/0.1400). Joint-space gain
+   moved 0.428 -> 0.773 (B) and direction 39.2 -> 30.4 deg, which is not enough because the
+   residual is set by the direction. **B also regresses the chassis and position tasks** (mode A
+   success 99.2% -> 61.3%, velocity error 3x) -- most likely because only the actor was
+   pre-trained and the critic was left stale; **C does not regress** and lifts mode B success
+   from 83% to 100%. Answer to the stage's question: IK supervision did **not** make the policy
+   an accurate attitude tracker. Next: re-fit the critic with B, and move C's auxiliary term
+   into task space. Two honest regressions are recorded there too: position accuracy
    was traded for orientation after iteration 300, and the arm-only success rate is the lowest of
    the three modes at 83%.
 7. **New platform**: the port plan for the wheeled `rangerboxcr10lidar` (AgileX Ranger 4WS/4WD +
