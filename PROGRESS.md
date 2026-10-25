@@ -189,6 +189,25 @@ Artifacts (each verified by loading/playing it back, not by exit code):
    through the real keyboard path with a following camera and a command/error HUD; on the main
    policy a 15 deg pitch command still leaves 11.2 deg of residual (roll 12.4, yaw 14.9 at 20 deg)
    while position and chassis tracking are fine, which is section 8's conclusion seen end to end.
+   **Stage 4.5f (2026-10-25)** asked why an actor that fits the IK map to 0.0054 rad offline does
+   not track attitude closed-loop, and answered it without any new training.
+   **B0 -- the supervised actor that never saw a PPO gradient -- is not better than A, B1 or C**
+   (6.3/6.4/6.3/6.5 deg steady state; 9-10 deg on +-0.2 rad commands), and the *distilled teacher
+   itself* is just as bad (6.1 deg) while online local IK reaches 0.7 deg. Handing control over
+   from a converged state (0.4 deg) makes B0 and the teacher walk to 10-12 deg within 0.5 s; IK
+   stays. So the failure is neither PPO nor the executor: **the learned map's fixed point is not
+   the commanded attitude**. Mechanism: the map's output moves only 16% as much as the observed
+   joint state does (feedforward table, almost no feedback), so nothing pulls the loop back; the
+   online states are *not* out of distribution (nearest-neighbour 5.60 vs 6.60 for held-out test
+   samples), so "data drift" is ruled out. PPO's erosion is gradual (0.0054 -> 0.0057 after one
+   iteration, 0.0282 after 200), and the old critic/Adam state carried into B is a measurable
+   mismatch (first `Loss/value` 15.6 vs 2.85 for C) but not the cause. A task-space FK auxiliary
+   loss has nothing to win: joint MSE already leaves 0.3 deg / 3 mm of task-space error. The
+   supervision set's real gap is elsewhere: 35.8% of candidates fail the local IK walk, and they
+   are systematically the large-attitude, near-limit targets (retention 98.4% at 0-5 deg vs 40.8%
+   at 30-60 deg), half of which a global solver does find. Next stage (4.5g) is data, not PPO:
+   recover that corner, add IK-driver (DAgger) rollouts that visit the states the loop actually
+   settles in, and accept on the handover test rather than on offline MAE.
 7. **New platform**: the port plan for the wheeled `rangerboxcr10lidar` (AgileX Ranger 4WS/4WD +
    Dobot CR10 + AG95) is at `docs/plans/plan.md`. **Stages 0-4 are done; stages 5-6 (MuJoCo, real-robot alignment) have not started.**
    The work lives on branch `rangercr10-world`; branch `rangercr10-teleop` (body-relative

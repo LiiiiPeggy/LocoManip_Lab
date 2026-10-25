@@ -109,6 +109,7 @@ print("1. 采集 (真实 rollout, 真实 117D 观测, 按 episode 划分)")
 print("=" * 92)
 records = []          # dicts: obs, label, episode, cmd_pos, cmd_quat, q, q_ik
 dropped = 0
+saturated = 0         # candidates whose DLS step hit the cap; reported, not dropped
 for ep in range(args_cli.episodes):
     obs, _ = env.reset()
     n_rec = 0
@@ -128,7 +129,15 @@ for ep in range(args_cli.episodes):
             p = cmd_pos[i]
             R = tk.quat_to_R(cmd_quat[i])
             q_ik, ep_p, ep_r, max_step, _ = tk.local_ik(q[i], p, R)
-            if ep_p > 1e-3 or ep_r > 1e-3 or max_step > 0.08:
+            # `max_step` cannot exceed `local_ik`'s own step_cap by more than floating point
+            # (4.5f measured the excess at 2.78e-17 on 200 random targets), so the old
+            # `max_step > 0.08` clause never detected a branch jump -- it fired on rounding,
+            # and only for samples whose steps saturated. 4.5f checked all of them against
+            # teacher_candidates.csv: 1653 of 1662 also failed the residual test, so the
+            # clause cost 9 samples out of 5120. It is a counter now, not a filter.
+            if max_step >= 0.08 - 1e-12:
+                saturated += 1
+            if ep_p > 1e-3 or ep_r > 1e-3:
                 dropped += 1
                 continue
             records.append(dict(obs=o[i].astype(np.float32),
@@ -137,7 +146,8 @@ for ep in range(args_cli.episodes):
                                 cmd_pos=p, cmd_rot=R))
             n_rec += 1
     print(f"  episode {ep}: 记录 {n_rec} 条")
-print(f"  合计 {len(records)} 条, 丢弃 {dropped} 条 (参考解未收敛/跳支)")
+print(f"  合计 {len(records)} 条, 丢弃 {dropped} 条 (参考解未收敛); "
+      f"其中步长饱和 {saturated} 条 (记录, 不丢弃: 饱和≠跳支)")
 
 X = torch.tensor(np.stack([r["obs"] for r in records]), device=DEV)
 # The actor emits 8 numbers; the teacher says nothing about the two chassis channels, so the
