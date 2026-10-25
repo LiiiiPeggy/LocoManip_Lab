@@ -65,6 +65,9 @@ parser.add_argument("--section", default="A", choices=["A", "B", "C", "D", "E"])
 parser.add_argument("--out", default="outputs/stage45f")
 parser.add_argument("--seed", type=int, default=12345)
 parser.add_argument("--log_root", default="logs/rsl_rl/ranger_cr10_teleop")
+parser.add_argument("--names", default="", help="comma-separated subset of A,B0,B1,C,T,TIK plus any --extra names")
+parser.add_argument("--extra", action="append", default=[],
+                    help="NAME=PATH of an additional actor (checkpoint or plain state dict), added to section A")
 args_cli, _ = parser.parse_known_args()
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -109,8 +112,9 @@ def load_actor_from_checkpoint(path: Path, device) -> torch.nn.Module:
     rather than trusting this comment.
     """
     ck = torch.load(path, map_location="cpu", weights_only=False)
-    sd = ck["actor_state_dict"]
-    sd = {k[len("mlp."):]: v for k, v in sd.items() if k.startswith("mlp.")}
+    sd = ck["actor_state_dict"] if isinstance(ck, dict) and "actor_state_dict" in ck else ck
+    sd = {(k[len("mlp."):] if k.startswith("mlp.") else k): v for k, v in sd.items()
+          if k.split(".")[-1] in ("weight", "bias")}
     mlp = build_mlp(sd["0.weight"].shape[1], device)
     mlp.load_state_dict(sd)
     mlp.eval()
@@ -169,13 +173,18 @@ class MLPPolicy:
         return a[0, 2:].cpu().numpy()
 
 
+for _spec in args_cli.extra:
+    _n, _, _p = _spec.partition("=")
+    CKPT[_n] = Path(_p)
+
+
 def make_policy(name: str, device) -> TorchPolicy | MLPPolicy | None:
     if name == "TIK":
         return None  # handled inline: it needs the live simulator state
     path = CKPT[name]
     if not path.exists():
         raise FileNotFoundError(f"{name}: {path} is missing")
-    if name == "B0":
+    if name == "B0" or name in {s.partition("=")[0] for s in args_cli.extra}:
         return MLPPolicy(name, path, device)
     if name == "T":
         return MLPPolicy(name, path, device, loader=load_teacher)
@@ -438,7 +447,9 @@ def summarize(rows, name):
 def section_a():
     import torch
 
-    names = ["B0", "B1", "C", "A", "T", "TIK"]
+    names = ["B0", "B1", "C", "A", "T", "TIK"] + [s.partition("=")[0] for s in args_cli.extra]
+    if args_cli.names:
+        names = [n.strip() for n in args_cli.names.split(",") if n.strip()]
     env = build_env(1)
     dev = env.unwrapped.device
     segs = build_schedule()

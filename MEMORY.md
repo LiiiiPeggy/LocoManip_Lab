@@ -154,3 +154,12 @@ while teleoperating.
   *position* clamp (which was correctly signed) and never the attitude step size or the negative
   side. A clamp test has to assert the step size and both signs at both ends -- "the value stopped
   changing" passes for a degenerate box.
+
+- **A supervision "test split" that shares commands with training is not a generalisation test
+  (2026-10-26).** Every episode here is started with `env.reset(seed=...)`, so the command term
+  replays the same RNG stream: the 4.5e IK dataset's held-out split sits **0.00 deg (median)**
+  from the nearest training command, and its successor sets added 1089 and 1338 samples without
+  adding a single new command. The fitted actor therefore measured 0.4 deg offline and produced
+  10-12 deg on any command it had not memorised -- the "offline/closed-loop paradox" of stages
+  4.5e-4.5f. Split by *command* (not only by episode) before believing an offline number, and
+  check the command distance of the test set to the training set the same way.

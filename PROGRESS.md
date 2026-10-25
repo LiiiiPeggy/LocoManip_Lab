@@ -208,6 +208,26 @@ Artifacts (each verified by loading/playing it back, not by exit code):
    at 30-60 deg), half of which a global solver does find. Next stage (4.5g) is data, not PPO:
    recover that corner, add IK-driver (DAgger) rollouts that visit the states the loop actually
    settles in, and accept on the handover test rather than on offline MAE.
+   **Stage 4.5g (2026-10-26)** went after the fix and found the evaluation was the reason the
+   paradox had survived. The actor's *first* handed-over step is already wrong: at one state and
+   one target, online IK commands a pose whose FK is 0.0 deg off while the actor's is 9.2-12.1,
+   and `FK(q_des)` predicts the settled error to within 1.4 deg -- so it is neither execution nor
+   smoothing, and there is no bug in the labels, the observation (bit-for-bit command match), the
+   history (refreshing it changes nothing) or the IK branch.
+   The offline numbers that contradicted this were measured on **the same commands as training**:
+   every episode is started with `env.reset(seed=...)`, so the command stream repeats and the
+   held-out commands sit 0.00 deg (median) from the training ones. Changing only the command at a
+   real state leaves the actor's target attitude wrong by ~100% of the change (3.1/6.1/12.2 deg
+   for 0.05/0.10/0.20 rad), i.e. the command channel has ~3% gain.
+   Six interventions were run and **none moves the closed loop**: IK-driven near-target data
+   (10.0 deg), DAgger on the actor's own states, decorrelated postures, 2766 samples at ~2700
+   *new* commands (10.0), near-solution postures at new commands (10.1), and a residual
+   parameterisation whose target is zero at the solution (9.3). All of them improved their own
+   offline metric first. Root cause of *why* the command is ignored at the states that matter is
+   **not established**; data-volume, state coverage, command coverage, parameterisation,
+   initialisation, observation completeness, the executor and IK multi-solution are all excluded.
+   Recommendation: fix the evaluation (split by command), and stop trying to learn the command
+   map from data -- put an analytic IK layer behind the actor or change the formulation.
 7. **New platform**: the port plan for the wheeled `rangerboxcr10lidar` (AgileX Ranger 4WS/4WD +
    Dobot CR10 + AG95) is at `docs/plans/plan.md`. **Stages 0-4 are done; stages 5-6 (MuJoCo, real-robot alignment) have not started.**
    The work lives on branch `rangercr10-world`; branch `rangercr10-teleop` (body-relative
