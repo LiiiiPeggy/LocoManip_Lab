@@ -48,10 +48,11 @@ parser.add_argument(
     "--camera_eye",
     type=float,
     nargs=3,
-    default=(1.45, -1.35, 0.95),
-    help="camera offset from the chassis origin, metres (world-aligned, so the view does not spin)",
+    default=(2.60, -2.40, 1.70),
+    help="camera offset from the chassis origin, metres (world-aligned, so the view does not spin); "
+    "~3.7 m back, which is what the vertical field of view needs to hold a 1.6 m tall arm",
 )
-parser.add_argument("--camera_target", type=float, nargs=3, default=(0.20, 0.0, 0.45))
+parser.add_argument("--camera_target", type=float, nargs=3, default=(0.10, 0.0, 0.45))
 args_cli = parser.parse_args()
 
 from isaaclab.app import AppLauncher  # noqa: E402
