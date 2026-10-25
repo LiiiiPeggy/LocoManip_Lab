@@ -147,3 +147,10 @@ while teleoperating.
   bounds, so a policy whose raw output drifts past the limit receives no gradient that could pull it
   back and stays pinned forever. Measured here at 4x the limit. Squash with `tanh` instead of
   clamping; check for it by logging the *raw* action next to the processed one.
+- **A limit written as a magnitude but read as a range (2026-10-25).**
+  `ori_limits_deg = ((22.9, 22.9), ...)` says "±22.9 deg" to a human and "low = high = +22.9" to
+  `max(lo, min(hi, x))`, so the *first* press of any attitude key in `KeyboardTeleopController`
+  snapped to +22.9 deg, minus keys included. Its check suite passed 22/22 because it tested the
+  *position* clamp (which was correctly signed) and never the attitude step size or the negative
+  side. A clamp test has to assert the step size and both signs at both ends -- "the value stopped
+  changing" passes for a degenerate box.

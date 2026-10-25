@@ -92,7 +92,11 @@ hold(c, "", 0.5)
 vx, wz = c.velocity_command
 pos, rpy = c.pose_offset
 check("速度保持为 0", vx == 0.0 and wz == 0.0, f"vx={vx:+.3f} wz={wz:+.3f}")
-check("末端目标确实动了", pos[0] > 0.01 and abs(rpy[0]) > 1e-3, f"x={pos[0]:+.4f} roll={math.degrees(rpy[0]):+.1f}deg")
+check(
+    "末端目标确实动了",
+    pos[0] > 0.01 and abs(rpy[0]) > 1e-3,
+    f"x={pos[0]:+.4f} roll={math.degrees(rpy[0]):+.1f}deg",
+)
 
 # -- 3 ---------------------------------------------------------------------
 print("\n3. 两组键同时操作, 互不影响")
@@ -201,6 +205,78 @@ check("速度上限 = 配置值", abs(vx - c.cfg.vx_max) < 1e-9 and abs(wz - c.c
       f"vx={vx:+.3f}/{c.cfg.vx_max} wz={wz:+.3f}/{c.cfg.wz_max}")
 check("位置上限 = 配置值", abs(pos[0] - c.cfg.pos_limits[0][1]) < 1e-9,
       f"x={pos[0]:+.4f}/{c.cfg.pos_limits[0][1]}")
+
+
+def tap(ctrl: KeyboardTeleopController, ch: str) -> None:
+    """One discrete key press: down for exactly one control step, then up."""
+    ctrl.press(ch)
+    ctrl.update(DT)
+    ctrl.release(ch)
+
+
+# -- 8b --------------------------------------------------------------------
+# Added after the demo exposed it: the limit was written as ((22.9, 22.9), ...) and read as
+# (low, high), so low == high == +22.9 deg and the *first* press of any attitude key snapped
+# to the positive limit -- including the minus keys. The position limits were always signed,
+# which is why the checks above passed. Test the step size and both signs, not just "clamps".
+print("\n8b. 姿态键: 单次按键一个 ori_step, 限位正负对称")
+# the trained sampling box, from teleop_env_cfg.EE_OFFSET_RANGES (roll/pitch +-0.40 rad, yaw
+# +-0.50 rad); the controller states them in degrees, rounded to 0.1 deg
+BOX_RP, BOX_YAW = math.degrees(0.40), math.degrees(0.50)
+MAX_RP = make().cfg.ori_limits_deg[0][1]
+MAX_YAW = make().cfg.ori_limits_deg[2][1]
+for axis, name, box in ((0, "roll", BOX_RP), (1, "pitch", BOX_RP), (2, "yaw", BOX_YAW)):
+    lo, hi = make().cfg.ori_limits_deg[axis]
+    check(f"{name} 限位 ≈ 训练采样盒 ±{box:.1f}deg 且正负对称",
+          abs(hi - box) < 0.05 and abs(lo + box) < 0.05, f"[{lo:+.1f}, {hi:+.1f}]deg")
+c = make()
+tap(c, "2")
+_, rpy = c.pose_offset
+check("roll 单次 + = ori_step", abs(math.degrees(rpy[0]) - c.cfg.ori_step_deg) < 1e-9,
+      f"{math.degrees(rpy[0]):+.2f}deg vs {c.cfg.ori_step_deg:.2f}deg")
+c = make()
+tap(c, "1")
+_, rpy = c.pose_offset
+check("roll 单次 - = -ori_step", abs(math.degrees(rpy[0]) + c.cfg.ori_step_deg) < 1e-9,
+      f"{math.degrees(rpy[0]):+.2f}deg")
+
+c = make()
+for _ in range(20):
+    tap(c, "2")
+_, rpy = c.pose_offset
+check("roll 正限位 = +22.9deg", abs(math.degrees(rpy[0]) - MAX_RP) < 1e-6, f"{math.degrees(rpy[0]):+.2f}deg")
+c = make()
+for _ in range(20):
+    tap(c, "1")
+_, rpy = c.pose_offset
+check("roll 负限位 = -22.9deg", abs(math.degrees(rpy[0]) + MAX_RP) < 1e-6, f"{math.degrees(rpy[0]):+.2f}deg")
+
+c = make()
+for _ in range(20):
+    tap(c, "4")
+_, rpy = c.pose_offset
+check("pitch 正限位 = +22.9deg", abs(math.degrees(rpy[1]) - MAX_RP) < 1e-6, f"{math.degrees(rpy[1]):+.2f}deg")
+c = make()
+for _ in range(20):
+    tap(c, "6")
+_, rpy = c.pose_offset
+check("yaw 正限位 = +28.6deg", abs(math.degrees(rpy[2]) - MAX_YAW) < 1e-6, f"{math.degrees(rpy[2]):+.2f}deg")
+c = make()
+for _ in range(20):
+    tap(c, "5")
+_, rpy = c.pose_offset
+check("yaw 负限位 = -28.6deg", abs(math.degrees(rpy[2]) + MAX_YAW) < 1e-6, f"{math.degrees(rpy[2]):+.2f}deg")
+
+c = make()
+for _ in range(20):
+    tap(c, "2")
+    tap(c, "4")
+    tap(c, "6")
+_, rpy = c.pose_offset
+check("三轴独立 (roll/pitch/yaw 同时到限位)",
+      abs(math.degrees(rpy[0]) - MAX_RP) < 1e-6 and abs(math.degrees(rpy[1]) - MAX_RP) < 1e-6
+      and abs(math.degrees(rpy[2]) - MAX_YAW) < 1e-6,
+      f"({math.degrees(rpy[0]):+.1f}, {math.degrees(rpy[1]):+.1f}, {math.degrees(rpy[2]):+.1f})deg")
 
 # -- 9 ---------------------------------------------------------------------
 print("\n9. 四元数工具函数自检 (与 Isaac Lab 版本在集成脚本里逐值对比)")

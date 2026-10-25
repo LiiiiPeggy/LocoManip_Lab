@@ -166,8 +166,15 @@ class KeyboardTeleopConfig:
     ori_home_rate_deg: float = 30.0
     """degrees/s for the walk-back to neutral, which has no held key to pace it"""
 
-    ori_limits_deg: tuple = ((22.9, 22.9), (22.9, 22.9), (28.6, 28.6))
-    """per-axis offset limits, degrees -- the trained box, same reasoning as pos_limits"""
+    ori_limits_deg: tuple = ((-22.9, 22.9), (-22.9, 22.9), (-28.6, 28.6))
+    """per-axis offset limits, degrees (low, high) -- the trained box, same reasoning as pos_limits.
+
+    Signed pairs, not magnitudes. Written as ``((22.9, 22.9), ...)`` first, which read as a
+    ``(low, high)`` box collapses to the single point +22.9 deg: every attitude key then jumped
+    to the positive limit on the first press, and the minus keys did the same. The training box
+    (``EE_OFFSET_RANGES``: roll/pitch +-0.40 rad = +-22.9 deg, yaw +-0.50 rad = +-28.6 deg) is
+    symmetric, which is what these numbers are.
+    """
 
     home_rate_scale: float = 1.0
     """the reset walk-back uses the ordinary rates times this"""

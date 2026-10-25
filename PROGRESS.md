@@ -3,7 +3,7 @@
 A snapshot, not a log. Delete what is no longer true; do not append history here (that is
 PROCESS.md). Do not record unverified conclusions.
 
-**Last verified: 2026-10-23** — every claim below was produced by re-running the command on this
+**Last verified: 2026-10-25** — every claim below was produced by re-running the command on this
 machine, unless marked otherwise.
 
 ## Current objective
@@ -15,7 +15,7 @@ kept on separate branches so they never share a task id, experiment name or log 
   itself. Stages 0-4 done and accepted (below); stages 5-6 (MuJoCo, real-robot alignment) not started.
 - `rangercr10-teleop` — a *body-relative* end-effector target plus a human velocity command, the
   GO2-PIPER teleoperation shape. **Trained and accepted** (stages 4.1-4.4 below); the keyboard
-  controller and MuJoCo deployment are not written yet.
+  controller is written and verified (4.5), MuJoCo deployment (4.6) is not started.
 
 GO2-PIPER remains the reference implementation and its policy is still staged for MuJoCo (below).
 
@@ -122,8 +122,9 @@ Artifacts (each verified by loading/playing it back, not by exit code):
    (4.6) are the remaining pieces of the current phase; see the entry below.
 6. **`rangercr10-teleop`**: the plan is `docs/plans/teleop_plan.md`. Stages 4.1 (environment +
    six-check acceptance), 4.2 (training, 2048 envs x 1000 iterations in 105 min), 4.3 (three-mode
-   acceptance) and 4.4 (decoupled-baseline control group) are done. Still open: 4.5 keyboard
-   teleoperation (`WASDQE` + `IJKLUO123456`) and 4.6 MuJoCo deployment.
+   acceptance) and 4.4 (decoupled-baseline control group) are done; 4.5 keyboard teleoperation
+   (`WASDQE` + `IJKLUO123456`) is done and verified (see the bug below). Still open: 4.6 MuJoCo
+   deployment.
    Run `logs/rsl_rl/ranger_cr10_teleop/2026-10-12_20-14-23/`; EE position error 0.189 -> 0.081 m,
    orientation 0.649 -> 0.096 rad, linear velocity error 0.855 -> 0.074 m/s, no falls.
    Acceptance: chassis-only success 100% with the body-relative target unchanged to 0.0 while the
@@ -177,6 +178,17 @@ Artifacts (each verified by loading/playing it back, not by exit code):
    into task space. Two honest regressions are recorded there too: position accuracy
    was traded for orientation after iteration 300, and the arm-only success rate is the lowest of
    the three modes at 83%.
+   **Keyboard + demo (2026-10-25)**: `KeyboardTeleopController` had a real bug -- its attitude
+   limits were written as magnitudes `((22.9, 22.9), ...)` but read as `(low, high)`, so `lo == hi`
+   and the *first* press of any attitude key snapped to +22.9 deg, minus keys included. The
+   position limits were always signed, which is why the original 22/22 check passed: it tested the
+   position clamp and never the attitude step size or the negative side. Fixed to signed pairs and
+   covered by six new checks (33/33 now). Only the keyboard path was affected -- the evaluation
+   and diagnostic scripts write command tensors directly, so stages 4.5b-4.5e are untouched, and
+   MuJoCo (4.6) has never run. `scripts/ranger_cr10/demo_teleop.py` records a scripted demo
+   through the real keyboard path with a following camera and a command/error HUD; on the main
+   policy a 15 deg pitch command still leaves 11.2 deg of residual (roll 12.4, yaw 14.9 at 20 deg)
+   while position and chassis tracking are fine, which is section 8's conclusion seen end to end.
 7. **New platform**: the port plan for the wheeled `rangerboxcr10lidar` (AgileX Ranger 4WS/4WD +
    Dobot CR10 + AG95) is at `docs/plans/plan.md`. **Stages 0-4 are done; stages 5-6 (MuJoCo, real-robot alignment) have not started.**
    The work lives on branch `rangercr10-world`; branch `rangercr10-teleop` (body-relative
