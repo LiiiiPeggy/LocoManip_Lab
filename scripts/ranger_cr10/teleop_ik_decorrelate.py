@@ -67,6 +67,11 @@ parser.add_argument("--random_cmds", type=int, default=0,
                          "produces are all the old datasets contain, which is why their held-out sets "
                          "looked accurate")
 parser.add_argument("--postures_per_cmd", type=int, default=1)
+parser.add_argument("--fresh", action="store_true", help="train from scratch instead of from --init")
+parser.add_argument("--old_weight", type=int, default=1,
+                    help="0 trains on the decorrelated set only; the old rollouts correlate q with "
+                         "the command and let the network fit without reading it")
+parser.add_argument("--steps", type=int, default=0, help="optimiser steps (0 = use --epochs)")
 args_cli = parser.parse_args()
 
 OUT = Path(args_cli.out)
@@ -140,10 +145,14 @@ print("  -> 关节位形与标签不再相关, 唯一能解释标签的是命令
 data = torch.load(args_cli.base, map_location="cpu", weights_only=False)
 X_old, Y_old = data["X"], data["Y"]
 tr, va, te = data["tr"], data["va"], data["te"]
-Xtr = torch.cat([X_old[tr].to(DEV), X_new, X_new], dim=0)     # the decorrelated set counts double
-Ytr = torch.cat([Y_old[tr].to(DEV), Y_new, Y_new], dim=0)
-Xva = torch.cat([X_old[va].to(DEV), X_new[: len(X_new) // 5]], dim=0)
-Yva = torch.cat([Y_old[va].to(DEV), Y_new[: len(Y_new) // 5]], dim=0)
+if args_cli.old_weight:
+    Xtr = torch.cat([X_old[tr].to(DEV)] * args_cli.old_weight + [X_new, X_new], dim=0)
+    Ytr = torch.cat([Y_old[tr].to(DEV)] * args_cli.old_weight + [Y_new, Y_new], dim=0)
+    Xva = torch.cat([X_old[va].to(DEV), X_new[: len(X_new) // 5]], dim=0)
+    Yva = torch.cat([Y_old[va].to(DEV), Y_new[: len(Y_new) // 5]], dim=0)
+else:
+    Xtr, Ytr = X_new, Y_new
+    Xva, Yva = X_new[: len(X_new) // 5], Y_new[: len(Y_new) // 5]
 Xte, Yte = X_old[te].to(DEV), Y_old[te].to(DEV)
 
 
@@ -152,6 +161,8 @@ def make_net():
     n = torch.nn.Sequential(
         torch.nn.Linear(117, 512), torch.nn.ELU(), torch.nn.Linear(512, 256), torch.nn.ELU(),
         torch.nn.Linear(256, 128), torch.nn.ELU(), torch.nn.Linear(128, 8)).to(DEV)
+    if args_cli.fresh:
+        return n
     ck = torch.load(args_cli.init, map_location="cpu", weights_only=False)
     sd = ck["actor_state_dict"] if isinstance(ck, dict) and "actor_state_dict" in ck else ck
     n.load_state_dict({(k[4:] if k.startswith("mlp.") else k): v for k, v in sd.items()
@@ -193,9 +204,9 @@ print("=" * 92)
 net = make_net()
 print(f"  训练前: 原测试集关节 MAE {offline(net):.4f} rad, 命令灵敏度(Δroll=0.1/0.2) "
       f"{cmd_sensitivity(net)[0]:.1f}° / {cmd_sensitivity(net)[1]:.1f}°")
-opt = torch.optim.Adam(net.parameters(), lr=2e-4)
+opt = torch.optim.Adam(net.parameters(), lr=(1e-3 if args_cli.fresh else 2e-4))
 best_v, best_s, patience = float("inf"), None, 0
-for epoch in range(args_cli.epochs):
+for epoch in range(args_cli.steps or args_cli.epochs):
     net.train()
     perm = torch.randperm(len(Xtr), device=DEV)
     for b in range(0, len(perm), 256):

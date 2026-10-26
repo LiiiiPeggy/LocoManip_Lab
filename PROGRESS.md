@@ -228,6 +228,21 @@ Artifacts (each verified by loading/playing it back, not by exit code):
    initialisation, observation completeness, the executor and IK multi-solution are all excluded.
    Recommendation: fix the evaluation (split by command), and stop trying to learn the command
    map from data -- put an analytic IK layer behind the actor or change the formulation.
+   **Stage 4.5h (2026-10-27)** found the mechanism. A command-disjoint split of the supervision
+   (20% of the 312 command groups held out entirely) shows the actor is *not* merely memorising:
+   on unseen commands it is as accurate as on seen ones at supervision states (0.2 deg). The
+   failure is a shortcut: in every rollout the arm is already where its command put it, so the
+   joint state alone predicts the label and the command channel is never used. Evidence: the same
+   architecture trained from scratch on **112 samples** (16 commands x 8 *randomised* postures)
+   reaches **1.0 deg** on new commands at exactly-on-target states, while the real actor is
+   **18.0 deg** there -- 112 decorrelated samples beat 3142 correlated ones. Encodings are not
+   the issue (canonical quaternion 1.3 deg, rotation vector 1.5 deg).
+   Training on decorrelated samples does open the channel -- the first handover step improves from
+   9.4-12.1 deg to 1.7-6.3 deg (from scratch) or 2.5-10.0 deg (from B0) -- but both variants lose
+   real-state coverage and settle worse (28-47 deg, and 5.3-23.8 deg with the original test set
+   degrading to 0.10 rad). 4.5g's blend diluted the decorrelated data too far to matter (6.4->5.8
+   deg). The working ratio is between those two and has not been found yet; no closed-loop fix
+   was delivered this stage, but the mechanism and the direction are now established.
 7. **New platform**: the port plan for the wheeled `rangerboxcr10lidar` (AgileX Ranger 4WS/4WD +
    Dobot CR10 + AG95) is at `docs/plans/plan.md`. **Stages 0-4 are done; stages 5-6 (MuJoCo, real-robot alignment) have not started.**
    The work lives on branch `rangercr10-world`; branch `rangercr10-teleop` (body-relative
