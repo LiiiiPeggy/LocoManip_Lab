@@ -243,6 +243,32 @@ Artifacts (each verified by loading/playing it back, not by exit code):
    degrading to 0.10 rad). 4.5g's blend diluted the decorrelated data too far to matter (6.4->5.8
    deg). The working ratio is between those two and has not been found yet; no closed-loop fix
    was delivered this stage, but the mechanism and the direction are now established.
+   **Stage 4.5i (2026-10-29) fixed it, and the root cause was upstream of the policy.** The
+   command sampler `UniformTCPBodyPoseCommand._resample_command` drew all three position offsets
+   (and all three Euler angles) from one tensor through `Tensor.uniform_`, which fills in place
+   and returns the same tensor: every command the task ever trained on satisfied
+   `offset_x == offset_y == offset_z` and `roll == pitch == yaw` -- a 2-D line in the 6-D box
+   (verified on all 3142 old commands, max deviation 1e-7). The keyboard emits exactly the
+   off-line commands, which is why "I" moved the tool ~4 mm instead of 90 mm. Fixed with
+   per-axis sampling; `check_teleop_env.py` section D2 now asserts independence (4096 commands,
+   |corr| <= 0.019, 0% duplicates). Supervision was re-collected with the fixed sampler
+   (`logs/ik_teacher_box`: 4105 samples, 414 commands, labels FK-verified to 0.81 mm / 0.011 deg),
+   then trained as a mixture of real rollouts and decorrelated postures at 2:1 and 1:1
+   (command-disjoint 248/82/84 split; 20000 optimiser updates each, identical batch/lr/val/early-stop).
+   Result: unseen-command FK attitude 20.2 deg -> **0.69 / 0.61 deg** (validation),
+   **0.73 / 0.67 deg** (test), 0.75 / 0.66 deg on fresh-command on-target probes, command
+   sensitivity (droll 0.1/0.2) 21.3/23.4 -> **0.4/0.7 deg**. Closed loop (18 commands, 8 of them
+   never supervised): C1 first step 14.3 (B0) / 9.8 (b0dec) -> **0.5 / 0.4 deg**, 2.5 s
+   12.5 (B0) / 16.3 (b0dec) -> **0.5-0.7 deg**, position 76-115 -> **10 mm**, jitter 0.21 -> 0.02 deg --
+   equal to the online-IK reference (0.6 deg / 9 mm). Three-mode regression: mode A EE position
+   0.0919 -> **0.0091 m**, mode C 0.0814 -> **0.0238 m**, attitude residual at 0.2 rad
+   0.204 -> **0.012 rad**. **Cost: the chassis got worse** (mode A linear-velocity error
+   0.0114 -> 0.0550, mode B chassis creep 0.0019 -> 0.039 m/s), because supervised training only
+   anchors `[vx, wz]` to B0 on real states. Neither run reached a plateau within the 20000-update
+   budget (last-10000 gain 18-20%), so "converged" is not claimed. Next: the PPO fine-tune in
+   plan 13.6 (small arm exploration std, IK supervision mixed into the PPO loss, closed-loop
+   regression every 250 iterations); MuJoCo (4.6) stays blocked until that restores chassis
+   tracking.
 7. **New platform**: the port plan for the wheeled `rangerboxcr10lidar` (AgileX Ranger 4WS/4WD +
    Dobot CR10 + AG95) is at `docs/plans/plan.md`. **Stages 0-4 are done; stages 5-6 (MuJoCo, real-robot alignment) have not started.**
    The work lives on branch `rangercr10-world`; branch `rangercr10-teleop` (body-relative

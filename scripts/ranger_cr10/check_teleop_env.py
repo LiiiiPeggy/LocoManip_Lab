@@ -29,7 +29,12 @@ Six checks, each written as a positive measurement rather than "it constructed":
   D  reachability       -- the orientation error at the default arm pose for freshly sampled
                            commands is bounded by the sampled offset, not by pi. A constant
                            near pi means the box is outside the arm's workspace and the
-                           reward is a flat penalty.
+                           reward is a flat penalty
+  D2 command diversity  -- the six commanded offsets are *independent*. The sampler drew all
+                           three position offsets (and all three Euler angles) from one
+                           aliased tensor until 2026-10-29, so every command satisfied
+                           x == y == z and roll == pitch == yaw. Range tests all pass on that
+                           degenerate box, which is why it survived four stages.
   E  diagnostics        -- the linear and angular velocity error curves are logged as two
                            separate quantities, next to the EE errors and the success rate
   F  velocity tracking  -- with the command fed straight to the base controller (the
@@ -48,9 +53,8 @@ from isaaclab.app import AppLauncher
 app = AppLauncher(headless=True).app
 
 import gymnasium as gym  # noqa: E402
-import torch  # noqa: E402
-
 import LeggedManip_Lab.tasks  # noqa: E402,F401
+import torch  # noqa: E402
 from LeggedManip_Lab.assets.ranger_cr10.ranger_cr10_articulation_cfg import ARM_JOINT_NAMES  # noqa: E402
 from LeggedManip_Lab.tasks.manager_based.leggedmanip_lab.config.ranger_cr10.teleop_env_cfg import (  # noqa: E402
     RangerCr10TeleopEnvCfg,
@@ -63,6 +67,8 @@ from LeggedManip_Lab.tasks.manager_based.leggedmanip_lab.mdp.tcp import (  # noq
     TCP_ANCHOR_BODY,
     tcp_pose_b,
 )
+
+from isaaclab.utils.math import euler_xyz_from_quat, quat_conjugate, quat_mul  # noqa: E402
 
 cfg = RangerCr10TeleopEnvCfg()
 cfg.scene.num_envs = 64
@@ -113,9 +119,14 @@ cmd = base_vel.processed_actions
 expect_vx = 0.5 * math.tanh(0.3)
 expect_wz = 0.5 * math.tanh(-0.2)
 print(f"  策略输出 [0]=0.3, [1]=-0.2  ->  base_vel 处理后 (vx, wz) = ({cmd[0, 0]:+.4f}, {cmd[0, 1]:+.4f})")
-print(f"  期望 0.5*tanh(0.3)={expect_vx:+.4f}, 0.5*tanh(-0.2)={expect_wz:+.4f}  -> "
-      f"{'通过' if abs(cmd[0, 0].item() - expect_vx) < 1e-5 else '不通过'}")
-print(f"  base_vel action_dim = {base_vel.action_dim} (必须是 2), joint_pos action_dim = {joint_pos.action_dim} (必须是 6)")
+print(
+    f"  期望 0.5*tanh(0.3)={expect_vx:+.4f}, 0.5*tanh(-0.2)={expect_wz:+.4f}  -> "
+    f"{'通过' if abs(cmd[0, 0].item() - expect_vx) < 1e-5 else '不通过'}"
+)
+print(
+    f"  base_vel action_dim = {base_vel.action_dim} (必须是 2), "
+    f"joint_pos action_dim = {joint_pos.action_dim} (必须是 6)"
+)
 print(f"  合计 {base_vel.action_dim + joint_pos.action_dim} 维, 声明顺序 = {list(u.action_manager.active_terms)}")
 # the arm channels are a *delta* on the default pose: raw 0.4 at scale 0.25 must land
 # 0.1 rad away from the authored default, not at 0.4 rad
@@ -124,10 +135,11 @@ if arm_ids is not None:
     applied = robot.data.joint_pos_target[0, arm_ids]
     default = robot.data.default_joint_pos[0, arm_ids]
     delta = (applied - default).tolist()
-    print(f"  机械臂通道 = 0.4 (scale 0.25)  ->  关节目标相对默认的偏移 = "
-          f"{[round(v, 4) for v in delta]}")
-    print(f"  期望 0.25*0.4 = {0.25 * arm_probe:.4f} rad  -> "
-          f"{'通过 (以默认姿态为中心)' if abs(delta[0] - 0.25 * arm_probe) < 1e-4 else '不通过'}")
+    print(f"  机械臂通道 = 0.4 (scale 0.25)  ->  关节目标相对默认的偏移 = {[round(v, 4) for v in delta]}")
+    print(
+        f"  期望 0.25*0.4 = {0.25 * arm_probe:.4f} rad  -> "
+        f"{'通过 (以默认姿态为中心)' if abs(delta[0] - 0.25 * arm_probe) < 1e-4 else '不通过'}"
+    )
 env.step(zero)
 
 print("\n===== B. 默认 TCP 常数 vs 实测 =====")
@@ -173,7 +185,7 @@ print(f"  底盘平均位移        {disp.mean().item():.4f} m (必须明显 > 0
 print(f"  base 系目标变化     {d_b.max().item():.3e} m (必须为 0)")
 print(f"  world 系目标变化    {d_w.mean().item():.4f} m (随底盘一起动, 因此它必须非零)")
 print("  注: world 系的变化是由 base 系目标加当前底盘位姿重构出来的, 所以真正独立的")
-print("      证据是 '底盘走了 %.2f m 而 base 系目标一字未动', 不是 world 系那一项。" % disp.mean().item())
+print(f"      证据是 '底盘走了 {disp.mean().item():.2f} m 而 base 系目标一字未动', 不是 world 系那一项。")
 print(f"  -> {'通过' if disp.mean() > 0.2 and d_b.max() < 1e-9 and d_w.mean() > 0.05 else '**不通过**'}")
 
 print("\n===== D. 采样目标的可达性 (重置后立刻测量) =====")
@@ -185,9 +197,66 @@ pos_err = ee_cmd.metrics["position_error"]
 ori_err = ee_cmd.metrics["orientation_error"]
 print(f"  采样目标相对默认 TCP 的距离: 均值 {pos_err.mean().item():.3f} m  最大 {pos_err.max().item():.3f} m")
 print(f"  姿态误差 (零动作):            均值 {ori_err.mean().item():.3f} rad 最大 {ori_err.max().item():.3f} rad")
-print(f"  采样盒名义最大偏移 = {math.dist((0.12, 0.15, 0.12), (0, 0, 0)):.3f} m (位置), "
-      f"{math.dist((0.4, 0.4, 0.5), (0, 0, 0)):.3f} rad (姿态)")
-print(f"  -> {'通过 (与采样盒同量级, 不是常数惩罚)' if ori_err.max() < 1.5 else '**不通过**: 姿态误差接近 pi, 采样盒不可达'}")
+print(
+    f"  采样盒名义最大偏移 = {math.dist((0.12, 0.15, 0.12), (0, 0, 0)):.3f} m (位置), "
+    f"{math.dist((0.4, 0.4, 0.5), (0, 0, 0)):.3f} rad (姿态)"
+)
+print(f"  -> {'通过 (与采样盒同量级, 不是常数惩罚)' if ori_err.max() < 1.5 else '**不通过**: 姿态误差接近 pi'}")
+
+print("\n===== D2. 命令采样: 六个分量必须独立 =====")
+# The sampler used one tensor for all three axes (`r.uniform_()` returns the same tensor it
+# fills in place), so every command was offset_x == offset_y == offset_z and roll == pitch
+# == yaw -- a two-dimensional line in a six-dimensional box. Any test that only checks the
+# ranges passes for that, so check the *joint* distribution instead.
+# Call the sampler itself rather than stepping: 64 envs give a correlation standard error of
+# 0.125, which cannot separate "independent" from "correlated" at any useful threshold.
+_ids = torch.arange(u.num_envs, device=u.device)
+pos_list, eul_list = [], []
+for _ in range(64):
+    ee_cmd._resample_command(_ids)
+    pos_list.append(ee_cmd.pose_command_b[:, :3].clone())
+    # decompose offset = cmd * conj(default) back into Euler angles in the env's convention
+    _dq = quat_mul(
+        ee_cmd.pose_command_b[:, 3:],
+        quat_conjugate(torch.tensor(ee_cmd.cfg.default_quat_b, device=u.device).unsqueeze(0).expand(u.num_envs, 4)),
+    )
+    eul_list.append(torch.stack(euler_xyz_from_quat(_dq), dim=-1))
+pos_off = torch.cat(pos_list) - torch.tensor(ee_cmd.cfg.default_pos_b, device=u.device)
+eul = torch.cat(eul_list)
+n_s = len(pos_off)
+
+
+def _corr(a, b):
+    a = a - a.mean()
+    b = b - b.mean()
+    den = a.norm() * b.norm()
+    return float((a * b).sum() / den) if den > 0 else float("nan")
+
+
+pairs_p = [("x", "y", 0, 1), ("x", "z", 0, 2), ("y", "z", 1, 2)]
+pairs_r = [("roll", "pitch", 0, 1), ("roll", "yaw", 0, 2), ("pitch", "yaw", 1, 2)]
+corrs = [_corr(pos_off[:, i], pos_off[:, j]) for _, _, i, j in pairs_p]
+corrs += [_corr(eul[:, i], eul[:, j]) for _, _, i, j in pairs_r]
+dup_p = float(((pos_off[:, 0] - pos_off[:, 1]).abs() < 1e-6).float().mean())
+dup_r = float(((eul[:, 0] - eul[:, 1]).abs() < 1e-6).float().mean())
+print(
+    f"  样本 {n_s} 条; 位置偏移 x/y/z 两两相关系数 "
+    f"{corrs[0]:+.3f} {corrs[1]:+.3f} {corrs[2]:+.3f}; 姿态 roll/pitch/yaw "
+    f"{corrs[3]:+.3f} {corrs[4]:+.3f} {corrs[5]:+.3f}"
+)
+print(f"  x==y 的比例 {dup_p * 100:.1f}%,  roll==pitch 的比例 {dup_r * 100:.1f}%  (退化采样会给出 100%)")
+_nominal = [
+    (ee_cmd.cfg.ranges.pos_x[1] - ee_cmd.cfg.ranges.pos_x[0]) / math.sqrt(12),
+    (ee_cmd.cfg.ranges.pos_y[1] - ee_cmd.cfg.ranges.pos_y[0]) / math.sqrt(12),
+    (ee_cmd.cfg.ranges.pos_z[1] - ee_cmd.cfg.ranges.pos_z[0]) / math.sqrt(12),
+]
+print(
+    f"  位置偏移 标准差 x/y/z {[round(float(v), 4) for v in pos_off.std(0)]}, "
+    f"名义 1/sqrt(12)*(区间宽) = {[round(v, 4) for v in _nominal]}"
+)
+_d2_ok = max(abs(c) for c in corrs) < 0.1 and dup_p < 0.02 and dup_r < 0.02
+print(f"  -> {'通过 (六个分量独立)' if _d2_ok else '**不通过**: 命令落在低维流形上'}")
+ee_cmd.cfg.resampling_time_range = (4.0, 8.0)
 
 print("\n===== E. 诊断曲线 (必须分通道) =====")
 for _ in range(20):
@@ -201,7 +270,8 @@ scalars = {
 }
 for k, v in scalars.items():
     print(f"  {k:<40}{v:+.5f}")
-print(f"  线/角速度误差是两个独立量: {'是' if 'error_vel_xy' in vel_cmd.metrics and 'error_vel_yaw' in vel_cmd.metrics else '否'}")
+_split = "error_vel_xy" in vel_cmd.metrics and "error_vel_yaw" in vel_cmd.metrics
+print(f"  线/角速度误差是两个独立量: {'是' if _split else '否'}")
 
 print("\n===== F. 解耦基线: 速度命令直通底盘 =====")
 print(f"  {'cmd (vx, wz)':<18}{'achieved (vx, wz)':>22}{'线速度比':>10}{'角速度比':>10}")
@@ -219,8 +289,10 @@ for vx, wz in ((0.25, 0.0), (-0.25, 0.0), (0.0, 0.25), (0.0, -0.25), (0.25, 0.25
         acc_w.append(robot.data.root_ang_vel_b[:, 2].mean().item())
     av = sum(acc_v) / len(acc_v)
     aw = sum(acc_w) / len(acc_w)
-    print(f"  vx={vx:+.2f} wz={wz:+.2f}   {av:>+10.3f} {aw:>+10.3f}"
-          f"{av / vx if vx else float('nan'):>10.2f}{aw / wz if wz else float('nan'):>10.2f}")
+    print(
+        f"  vx={vx:+.2f} wz={wz:+.2f}   {av:>+10.3f} {aw:>+10.3f}"
+        f"{av / vx if vx else float('nan'):>10.2f}{aw / wz if wz else float('nan'):>10.2f}"
+    )
 
 env.close()
 app.close()

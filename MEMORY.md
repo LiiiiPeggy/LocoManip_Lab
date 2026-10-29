@@ -155,6 +155,24 @@ while teleoperating.
   side. A clamp test has to assert the step size and both signs at both ends -- "the value stopped
   changing" passes for a degenerate box.
 
+- **A command sampler that aliases one tensor across axes (found 2026-10-29).**
+  `torch.stack([r.uniform_(lo, hi) for ...])` looks like three draws and is one: `Tensor.uniform_`
+  fills in place and returns the same tensor, so every stacked column holds the last value.
+  `UniformTCPBodyPoseCommand._resample_command` did this for all three position offsets and all
+  three Euler angles, so **every command the ranger_cr10 teleop task ever trained on** satisfied
+  `offset_x == offset_y == offset_z` and `roll == pitch == yaw` -- a 2-D line inside the 6-D box
+  (measured on 3142 real commands: all on the line to 1e-7). The policy matched that line to
+  0.8 deg and was 15 deg off on independent-axis commands, which is what the keyboard produces.
+  Check the *joint* distribution (pairwise correlation, duplicate fraction), never just the ranges
+  -- a degenerate sampler passes every range test. Fixed in `pose_command_teleop.py`
+  (`_uniform_axes`), asserted by `check_teleop_env.py` section D2 (4096 samples, |corr| < 0.1).
+- **A quaternion is not interchangeable with its negation as a network input (2026-10-29).**
+  `R_to_quat(quat_to_R(q))` can return `-q`; it is the same rotation and a completely different
+  input row. Building a command with a matrix round-trip therefore produced a state the actor had
+  only seen in the 3% of training rows with a negative `w`, and its output looked like a broken
+  command channel (measured: 55 deg error for a command whose reconstruction differed only in
+  sign). Always compose the commanded quaternion exactly the way the env does --
+  `quat_mul(quat_from_euler_xyz(r, p, y), TCP_DEFAULT_QUAT_B)` -- and never through a matrix.
 - **A supervision "test split" that shares commands with training is not a generalisation test
   (2026-10-26).** Every episode here is started with `env.reset(seed=...)`, so the command term
   replays the same RNG stream: the 4.5e IK dataset's held-out split sits **0.00 deg (median)**

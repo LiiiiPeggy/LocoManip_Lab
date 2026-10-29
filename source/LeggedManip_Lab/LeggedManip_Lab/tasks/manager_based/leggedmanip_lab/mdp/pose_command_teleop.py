@@ -80,6 +80,27 @@ TCP_DEFAULT_POS_B = (0.5519, -0.0742, 0.4696)
 TCP_DEFAULT_QUAT_B = (0.032072, -0.875128, 0.469424, -0.112978)
 
 
+def _uniform_axes(n: int, ranges, device) -> torch.Tensor:
+    """Independent uniform samples per axis, shape ``(n, 3)``.
+
+    Written out because the obvious one-liner is silently wrong:
+
+        r = torch.empty(n, device=device)
+        torch.stack([r.uniform_(*lo_hi_x), r.uniform_(*lo_hi_y), r.uniform_(*lo_hi_z)], dim=-1)
+
+    ``Tensor.uniform_`` fills *in place and returns the same tensor*, so all three entries of
+    the stack are the same object and all three columns hold the last draw. Between 2026-09
+    and 2026-10-29 that made every sampled command a point on a two-dimensional line --
+    ``offset_x == offset_y == offset_z`` and ``roll == pitch == yaw`` -- so the policy was
+    trained on 2 of the 6 commanded dimensions and treated every independent-axis command as
+    out of distribution. Measured on the 3142-sample supervision set: all 3142 commands sit
+    on that line to 1e-7. Section D2 of ``check_teleop_env.py`` now asserts independence.
+    """
+    lo = torch.tensor([float(r[0]) for r in ranges], device=device)
+    hi = torch.tensor([float(r[1]) for r in ranges], device=device)
+    return lo + (hi - lo) * torch.rand(n, 3, device=device)
+
+
 class UniformTCPBodyPoseCommand(UniformBodyPoseCommand):
     """Samples a chassis-relative target pose around the tool's default pose, tracks the TCP."""
 
@@ -102,31 +123,24 @@ class UniformTCPBodyPoseCommand(UniformBodyPoseCommand):
 
     def _resample_command(self, env_ids):
         n = len(env_ids)
-        r = torch.empty(n, device=self.device)
 
         # expanded to (n, ...) because quat_mul requires matching shapes -- it does not broadcast
         default_pos = torch.tensor(self.cfg.default_pos_b, device=self.device).expand(n, 3)
         default_quat = torch.tensor(self.cfg.default_quat_b, device=self.device).expand(n, 4)
 
         # -- position: an offset from the default, in the chassis frame ---------------
-        offset_pos = torch.stack(
-            [
-                r.uniform_(*self.cfg.ranges.pos_x),
-                r.uniform_(*self.cfg.ranges.pos_y),
-                r.uniform_(*self.cfg.ranges.pos_z),
-            ],
-            dim=-1,
+        offset_pos = _uniform_axes(
+            n,
+            (self.cfg.ranges.pos_x, self.cfg.ranges.pos_y, self.cfg.ranges.pos_z),
+            self.device,
         )
         self.pose_command_b[env_ids, :3] = default_pos + offset_pos
 
         # -- orientation: an offset about the chassis axes, pre-multiplied ------------
-        euler = torch.stack(
-            [
-                r.uniform_(*self.cfg.ranges.roll),
-                r.uniform_(*self.cfg.ranges.pitch),
-                r.uniform_(*self.cfg.ranges.yaw),
-            ],
-            dim=-1,
+        euler = _uniform_axes(
+            n,
+            (self.cfg.ranges.roll, self.cfg.ranges.pitch, self.cfg.ranges.yaw),
+            self.device,
         )
         offset_quat = quat_from_euler_xyz(euler[:, 0], euler[:, 1], euler[:, 2])
         self.pose_command_b[env_ids, 3:] = quat_mul(offset_quat, default_quat)
