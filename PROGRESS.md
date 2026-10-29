@@ -269,6 +269,31 @@ Artifacts (each verified by loading/playing it back, not by exit code):
    plan 13.6 (small arm exploration std, IK supervision mixed into the PPO loss, closed-loop
    regression every 250 iterations); MuJoCo (4.6) stays blocked until that restores chassis
    tracking.
+   **Stage 4.5j (2026-10-30) ran standard PPO on top of it for 6000 iterations.** The actor was
+   initialised from `actor_mix11_best.pt`, the critic re-initialised, the optimizer state emptied,
+   and the action std set to the per-dimension values standard PPO itself had converged to
+   (0.079-0.157) rather than the config default 1.0 (0.25 rad of joint noise, 20x the arm map's
+   precision). No IK teacher, no auxiliary loss, no new module: the default agent config only.
+   Training was healthy -- reward 17 -> 187, value loss 59 -> 0.36, success 0.86, 9.26 h at
+   2048 envs -- and by iteration 4000 it had matched the original 1000-iteration run's final
+   training metrics. Closed loop (10 commands, same protocol as 4.5i): chassis yaw tracking
+   **54% -> 97%** (wz 0.081 -> 0.146 of a 0.15 command) and steady-state chassis drift
+   **0.0392 -> 0.0015 m/s**, while EE attitude went 0.55 -> **1.20 deg** and position 10 -> **24 mm**.
+   Three modes at 64 envs put `model_5999` between mix11 and `model_1198` on every metric and
+   clearly on the right side of each: mode B' attitude 0.0268 rad (mix11 0.0157, 1198 0.1443),
+   mode C position 0.0476 m (0.0236 / 0.0814), mode A EE position 0.0365 m (0.0091 / 0.0919),
+   success 100% in A/B/C.
+   The key measurement is *when* the precision was lost: **one PPO update** moved the
+   deterministic EE error from 0.59 deg to 8.02 deg (action means shifted 0.52-0.94 units,
+   KL(init||new) median 123 against a target of 0.01), and 6000 iterations only clawed it back
+   to 3.44 deg -- the adaptive controller dropped the learning rate to its 1e-5 floor inside
+   that first iteration, after the damage. Offline one-step error and closed-loop steady-state
+   error are not the same quantity: the 3.44 deg probe is a single-step target error, the
+   closed loop rejects it down to 1.2 deg.
+   Verdict: **situation B of the 4.5j brief** -- chassis recovered, EE accuracy partly lost.
+   MuJoCo (4.6) is **not** started. The single-factor follow-up is prepared and its switches
+   verified but *not executed*: arm exploration 0.12 -> 0.03 and lr 1e-4, everything else
+   unchanged (checkpoint at `_stage45j_v2/model_0.pt`; command in plan 14.8).
 7. **New platform**: the port plan for the wheeled `rangerboxcr10lidar` (AgileX Ranger 4WS/4WD +
    Dobot CR10 + AG95) is at `docs/plans/plan.md`. **Stages 0-4 are done; stages 5-6 (MuJoCo, real-robot alignment) have not started.**
    The work lives on branch `rangercr10-world`; branch `rangercr10-teleop` (body-relative

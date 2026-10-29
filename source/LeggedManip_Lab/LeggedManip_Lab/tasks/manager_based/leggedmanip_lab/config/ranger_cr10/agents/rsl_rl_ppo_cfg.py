@@ -17,10 +17,11 @@ import os
 from isaaclab.utils import configclass
 
 from isaaclab_rl.rsl_rl import (
-    RslRlOnPolicyRunnerCfg,
     RslRlMLPModelCfg,
+    RslRlOnPolicyRunnerCfg,
     RslRlPpoAlgorithmCfg,
 )
+
 
 # World WBC -- policy drives the Ranger chassis and the CR10 arm together.
 # The action is 8-D (docs/plans/plan.md section 4.3). The observation grew from 99-D to
@@ -66,7 +67,6 @@ class RangerCr10WBCPPORunnerCfg(RslRlOnPolicyRunnerCfg):
     )
 
 
-
 # Teleop -- body-relative end-effector target plus a human velocity command.
 # Branch `rangercr10-teleop`; see teleop_env_cfg.py. Same 8-D action and the same
 # 512/256/128 network as the world task, so a difference in the results is a difference
@@ -76,7 +76,9 @@ class RangerCr10TeleopPPORunnerCfg(RslRlOnPolicyRunnerCfg):
     num_steps_per_env = 24
     check_for_nan = True
     max_iterations = 10000
-    save_interval = 1000
+    # stage 4.5j asks for a checkpoint and a fixed-protocol validation every 500 iterations;
+    # nothing else depends on the interval, and existing runs keep their own saved models
+    save_interval = 500
 
     experiment_name = "ranger_cr10_teleop"
     actor = RslRlMLPModelCfg(
