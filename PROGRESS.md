@@ -300,6 +300,21 @@ Artifacts (each verified by loading/playing it back, not by exit code):
    set at once, and `model_5999` stays the best 8-D policy. **MuJoCo (4.6) is not started**;
    the next lever is the reward (orientation weight, position kernel width), not more training
    or a new module.
+   **Stage 4.5k (2026-10-30) measured the static drift and added an optional deadband.** On the
+   4.5j policy, with the external chassis command exactly zero and the arm moving for 30 s, the
+   actor still commands `|vx| = 0.0117 m/s` and `|wz| = 0.0112 rad/s`; the base controller obeys
+   it and the robot accumulates 1.4-2.1 mm of drift (two independent runs). So the source is the
+   actor's output, not the operator command and not the low-level controller. A conditional
+   zero-lock (`base_command_filter.py`: when a channel's effective command is zero, that
+   channel's action is zeroed; the six arm channels are untouched) cuts the 30 s drift to
+   0.43-0.87 mm (four repeats; unfiltered 1.41-2.50 mm, so about 1/3 and lower in every paired
+   run) and the static yaw rate from 1.7-2.1 to **0.6-0.7 mrad/s**, with no measurable change to
+   EE accuracy (40.2 mm / 1.71 deg either way) or to low/normal/zero-switch tracking. The input
+   deadband alone is a no-op when the command is exactly zero -- it only matters for a stick
+   that does not return fully to zero (0.01 m/s residual). Threshold 0.02 m/s / 0.02 rad/s:
+   0.05 demonstrably eats a legitimate 0.05 m/s command (actual speed 0.0018 instead of 0.05),
+   0.01 misses the 0.01 residual. Caveat for MuJoCo: the lock hands position holding to tyre
+   friction, so it needs re-checking on slopes and low friction.
 7. **New platform**: the port plan for the wheeled `rangerboxcr10lidar` (AgileX Ranger 4WS/4WD +
    Dobot CR10 + AG95) is at `docs/plans/plan.md`. **Stages 0-4 are done; stages 5-6 (MuJoCo, real-robot alignment) have not started.**
    The work lives on branch `rangercr10-world`; branch `rangercr10-teleop` (body-relative
