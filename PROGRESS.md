@@ -291,9 +291,15 @@ Artifacts (each verified by loading/playing it back, not by exit code):
    error are not the same quantity: the 3.44 deg probe is a single-step target error, the
    closed loop rejects it down to 1.2 deg.
    Verdict: **situation B of the 4.5j brief** -- chassis recovered, EE accuracy partly lost.
-   MuJoCo (4.6) is **not** started. The single-factor follow-up is prepared and its switches
-   verified but *not executed*: arm exploration 0.12 -> 0.03 and lr 1e-4, everything else
-   unchanged (checkpoint at `_stage45j_v2/model_0.pt`; command in plan 14.8).
+   The single-factor follow-up was then **executed** (plan 14.9): arm exploration std
+   0.12 -> 0.03, initial lr 5e-4 -> 1e-4, 1500 iterations, everything else -- algorithm,
+   network, reward, observations, action interface -- unchanged. It held the **one-step** map
+   (2.26 deg vs the main run's 3.44 deg, position 25 vs 51 mm) and the best training success
+   (0.866), but its **closed loop was worse** (2.1 deg / 36 mm against 1.2 deg / 24 mm) and its
+   chassis yaw recovered to only 55% (main run 97%). So neither direction reaches the target
+   set at once, and `model_5999` stays the best 8-D policy. **MuJoCo (4.6) is not started**;
+   the next lever is the reward (orientation weight, position kernel width), not more training
+   or a new module.
 7. **New platform**: the port plan for the wheeled `rangerboxcr10lidar` (AgileX Ranger 4WS/4WD +
    Dobot CR10 + AG95) is at `docs/plans/plan.md`. **Stages 0-4 are done; stages 5-6 (MuJoCo, real-robot alignment) have not started.**
    The work lives on branch `rangercr10-world`; branch `rangercr10-teleop` (body-relative
