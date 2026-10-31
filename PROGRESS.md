@@ -339,7 +339,12 @@ Artifacts (each verified by loading/playing it back, not by exit code):
    drift numbers averaged `base_x/base_y` over **16 envs** whose `base_com` randomisation differs,
    which cancelled the drift -- single-env the same script gives 13.6 mm, not 2.5 mm. The
    conclusion (the lock removes ~2/3 or more) stands; the absolute figures were low by ~5x, and
-   drift must be reported per-environment from now on. Known residual differences: arm-driven
+   drift must be reported per-environment from now on. The 4.5k slope/low-friction caveat was then
+   settled in MuJoCo (`teleop_eval.py --suite terrain`): on flat ground the lock holds 0.4-0.5 mm
+   at wheel-ground mu 0.35, 0.20 **and** 0.10 (friction is not involved when nothing pushes
+   sideways); on a 3 deg / 5 deg slope it creeps 37 / 66 mm per 30 s against 248-1683 / 303-5196
+   unfiltered, and it is never worse than no filter in any cell -- so no "disable the lock on a
+   slope" fallback is warranted, only the statement that its guarantee is flat-ground. Known residual differences: arm-driven
    chassis creep 47 vs 13.6 mm, ride height 0.4125 vs 0.4071 m (a cylinder does not squash), and
    no actuator delay (Isaac has 0-10 ms). Full detail: `docs/plans/teleop_plan.md` section 16.
 

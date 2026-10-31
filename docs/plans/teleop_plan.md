@@ -2344,8 +2344,29 @@ A3 的 `vx` 命令为 0 而 `|v|=0.004` 是原地转时轮胎的侧向蠕动, �
 正常行驶不受影响: `low`/`normal`/`switch` 三行在开/关滤波下数值完全一致(A4 0.0621 vs 0.0621),
 因为命令远高于死区, 锁定条件不成立。
 
-**残留风险的确认**: 锁定把"保持位置"完全交给轮胎摩擦。MuJoCo 里锁定后的残余 0.5 mm/30 s
-就是机械臂反作用力推动车轮的极限, 与 Isaac 的 0.36 mm 同量级。坡道与低摩擦的作用见 16.8。
+**残留风险的确认(4.5k 留下的两条待验前提之一)**: 锁定把"保持位置"完全交给轮胎摩擦, 所以必须测
+坡道与低摩擦。用 `--suite terrain`(倾斜重力代替倾斜地面; 轮-地摩擦写**车轮 geom** ——
+地面 geom 的摩擦系数在这里是无效的, 车轮带 `priority=1` 会覆盖它, 实测改地面无任何变化):
+
+| 坡度 | 轮-地 mu | 净漂移(锁定) | 净漂移(无滤波) | 路径长度(锁定/无滤波) |
+|---|---:|---:|---:|---:|
+| 0° | 0.35 / 0.20 / 0.10 | **0.4-0.5 mm** | 47-69 mm | 3.9 / 523 mm |
+| 3° | 0.35 | 36.5 mm | 284.7 mm | 76 / 790 mm |
+| 3° | 0.20 | 36.6 mm | 247.7 mm | 76 / 1015 mm |
+| 3° | 0.10 | 37.2 mm | **1683 mm** | 78 / 3239 mm |
+| 5° | 0.35 | 65.8 mm | 302.6 mm | 135 / 945 mm |
+| 5° | 0.20 | 66.1 mm | 756.9 mm | 137 / 1997 mm |
+| 5° | 0.10 | 119.6 mm | **5196 mm** | 247 / 9006 mm |
+
+三条结论:
+- **平地与摩擦无关**: mu 从 0.35 降到 0.10, 锁定后的漂移仍是 0.4-0.5 mm —— 平地上没有横向载荷,
+  摩擦系数不参与"保持"。
+- **坡道上锁定会缓慢下滑**, 量级随坡度增长(3° 约 1.2 mm/s, 5° 约 2.2 mm/s), 这是速度伺服
+  (kv=60)对抗重力分量的极限, 不是滤波器失效。
+- **锁定在任何一格都不比不锁定差**(每格都低 4-40 倍), 所以**不需要**"检测到坡道就关掉锁定"的回退
+  逻辑 —— 关掉只会更糟。真正该做的是把承诺说清楚: **零速锁定的"静止"保证只对平地成立**;
+  坡道上它把下滑从"随策略漂移"降到"受控的缓慢下滑"。低摩擦 + 缓坡(5°/mu 0.1)时残余 120 mm/30 s,
+  这一档应交给操作者判断或上层的位置保持。
 
 ### 16.7 滚动阻力的修改前后(唯一调整过的 MuJoCo 物理参数)
 
@@ -2404,7 +2425,9 @@ C2b 30 vs 31 mm / 0.79° vs 0.72°; 各漂移场景的平均 EE 误差 MuJoCo �
 
 **5. 零速滤波在 MuJoCo 是否有效?** 非常有效: 30 s 净漂移 47.4 -> **0.5 mm**, 路径长度 523 -> 3.9 mm,
 偏航 2.54° -> 0°, 而低速/正常/切换三类行驶的跟踪完全不变, 机械臂六维误差不变。
-`static_near` 从 117 mm 降到 0.4 mm。
+`static_near` 从 117 mm 降到 0.4 mm。**平地以外**: 3°/5° 坡道上仍比不滤波好 4-40 倍
+(37/66 mm vs 248-5196 mm), 但"静止"只在平地成立, 所以**不需要**坡道回退逻辑, 需要的是把这个
+前提写进操作说明。
 
 **6. 键盘遥操作是否完整可用?** 是。W/S/Q/E 速度、I/K/J/L/U/O 平移、1-6 姿态、R 回零全部在
 16.3 的脚本化时间线上实测生效; 底盘松键回零、EE 松键保持、R 立即停底盘并平滑回中。
@@ -2425,11 +2448,11 @@ C2b 30 vs 31 mm / 0.79° vs 0.72°; 各漂移场景的平均 EE 误差 MuJoCo �
 | `mujoco/robots/ranger_cr10/ranger_cr10.xml`, `scene.xml` | 生成的模型与场景(地面 0.35 摩擦) |
 | `mujoco/deploy/deploy_mujoco/ranger_cr10/ranger_policy.py` | 117 维观测、`ChassisAction`、TCP、Actor 加载 |
 | `mujoco/deploy/deploy_mujoco/ranger_cr10/ranger_cr10_deploy.py` | 键盘遥操作入口 |
-| `mujoco/deploy/deploy_mujoco/ranger_cr10/teleop_eval.py` | 三套无头评估(drift / modes / convergence) |
+| `mujoco/deploy/deploy_mujoco/ranger_cr10/teleop_eval.py` | 四套无头评估(drift / modes / convergence / terrain) |
 | `mujoco/deploy/deploy_mujoco/ranger_cr10/config.yaml` | 策略、场景、滤波器、键盘参数 |
 | `scripts/ranger_cr10/check_mujoco_interface.py` | 五项接口一致性检查(需要 Isaac Lab) |
 
-产物数据: `outputs/mujoco_interface/interface_check.json`; `outputs/stage46_mujoco/mujoco_{drift,modes,convergence}.json`
+产物数据: `outputs/mujoco_interface/interface_check.json`; `outputs/stage46_mujoco/mujoco_{drift,modes,convergence,terrain}.json`
 与 `trace_*.csv`; `--tag no_rolling` 一组为无滚动阻力对照。
 
 ```bash

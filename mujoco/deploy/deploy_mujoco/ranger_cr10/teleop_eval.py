@@ -114,6 +114,23 @@ class Sim:
         self.path = 0.0
         self.t = 0.0
 
+    def set_slope_deg(self, slope_deg: float) -> None:
+        """Tilt gravity instead of the ground: the same dynamics, no geometry surgery."""
+        a = np.radians(slope_deg)
+        self.m.opt.gravity[:] = [9.81 * np.sin(a), 0.0, -9.81 * np.cos(a)]
+
+    def set_wheel_friction(self, mu: float) -> None:
+        """Set sliding friction on the wheel geoms.
+
+        The floor's value does nothing here on purpose: the wheel geoms carry `priority=1`
+        (so wheel-ground contacts use the wheels' own coefficient, which is how the task pins
+        the tyre to 0.35). A slippery floor is therefore modelled by lowering the *wheels'*
+        coefficient -- measured: writing it on the floor geom changed nothing at all.
+        """
+        for name in WHEEL_JOINT_NAMES:
+            gid = mujoco.mj_name2id(self.m, mujoco.mjtObj.mjOBJ_GEOM, name.replace("_joint", "_link_col"))
+            self.m.geom_friction[gid] = [mu, 0.005, 0.0001]
+
     def reset(self) -> None:
         mujoco.mj_resetDataKeyframe(self.m, self.d, self.home)
         mujoco.mj_forward(self.m, self.d)
@@ -322,6 +339,50 @@ def modes_suite(sim: Sim, out: Path):
     return results
 
 
+def terrain_suite(sim: Sim, out: Path, static_steps: int = 300):
+    """Does the zero-lock survive a slope or a slippery floor? (Task C's follow-up.)
+
+    The lock hands "stay where you are" entirely to the tyres, so the case to test is the one
+    where the tyres have something to be pushed against. Gravity is tilted rather than the
+    ground, and the wheel coefficient is the knob that actually matters (the floor's is
+    overridden by the wheels' `priority=1` contact parameter).
+    """
+    print()
+    print("=" * 108)
+    print("terrain suite (static 场景 30 s, 手臂持续运动; 坡度用倾斜重力实现)")
+    print("=" * 108)
+    print(
+        f"  {'坡度':<8}{'轮-地 mu':<10}{'配置':<8}{'净漂移':>10}"
+        f"{'路径长度':>10}{'|v|':>9}{'偏航':>9}{'EE 位置/姿态':>16}"
+    )
+    results = []
+    for slope in (0.0, 3.0, 5.0):
+        for mu in (0.35, 0.20, 0.10):
+            for cfg_name, kw in (
+                ("lock", dict(vx_deadband=0.02, wz_deadband=0.02, lock_output=True)),
+                ("none", dict(vx_deadband=0.0, wz_deadband=0.0, lock_output=False)),
+            ):
+                sim.set_slope_deg(slope)
+                sim.set_wheel_friction(mu)
+                sim.filt = BaseCommandFilter(**kw)
+                sim.reset()
+                rows = []
+                for i in range(6):
+                    sim.set_commands(0.0, 0.0, ee_command_from_offset(EE_TARGETS[i], EE_ATT[i]))
+                    rows += [sim.step() for _ in range(static_steps // 6)]
+                s = summarise(rows)
+                s.update(slope_deg=slope, wheel_mu=mu, config=cfg_name)
+                results.append(s)
+                print(
+                    f"  {slope:<8.0f}{mu:<10}{cfg_name:<8}{s['drift_m'] * 1000:>9.1f}mm"
+                    f"{s['path_m'] * 1000:>9.1f}mm{s['act_speed']:>9.4f}{s['drift_yaw_deg']:>8.2f}°"
+                    f"{s['ee_pos'] * 1000:>10.1f}mm / {math.degrees(s['ee_ori']):.2f}°"
+                )
+    sim.set_slope_deg(0.0)
+    sim.set_wheel_friction(0.35)
+    return results
+
+
 def convergence_commands():
     """The 14 commands of check_teleop_stage45i.py, converted the same way."""
     cmds = [
@@ -425,7 +486,7 @@ def convergence_suite(sim: Sim, out: Path, watch: int = 25):
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--policy", default=DEFAULT_POLICY)
-    ap.add_argument("--suite", default="all", choices=["drift", "modes", "convergence", "all"])
+    ap.add_argument("--suite", default="all", choices=["drift", "modes", "convergence", "terrain", "all"])
     ap.add_argument("--out", default="outputs/stage46_mujoco")
     ap.add_argument(
         "--wheel_frictionloss",
@@ -451,6 +512,8 @@ def main() -> None:
         payload["modes"] = modes_suite(sim, out)
     if args.suite in ("convergence", "all"):
         payload["convergence"] = convergence_suite(sim, out)
+    if args.suite in ("terrain", "all"):
+        payload["terrain"] = terrain_suite(sim, out)
 
     suffix = f"_{args.tag}" if args.tag else ""
     (out / f"mujoco_{args.suite}{suffix}.json").write_text(json.dumps(payload, indent=1))
