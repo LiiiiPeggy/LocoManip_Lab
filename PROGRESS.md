@@ -325,7 +325,7 @@ Artifacts (each verified by loading/playing it back, not by exit code):
    `<=2.5e-8`, TCP forward kinematics **0.002 mm / 0.0001 deg**, 256 random actions through
    `BaseVelocityAction` vs the ported `ChassisAction` `<=6.1e-7`, deterministic actor identical.
    Closed loop, MuJoCo vs Isaac on the same fixed commands: C2 median 2.5 s attitude
-   **1.39 deg vs 1.37 deg**, position **25.6 vs 25.9 mm**; C2b (vx 0.25 / wz 0.15 / roll +0.2)
+   **1.40 deg vs 1.37 deg**, position **25.5 vs 25.9 mm**; C2b (vx 0.25 / wz 0.15 / roll +0.2)
    vx 0.284 vs 0.280, EE 30 mm / 0.79 deg vs 31 mm / 0.72 deg; 15 s driving at 0.05 / 0.25 m/s
    matches in speed (0.0619 vs 0.0622, 0.2873 vs 0.2891) and in distance travelled. So EE accuracy
    does **not** degrade in MuJoCo, and the three modes work (arm-only leaves the chassis at
