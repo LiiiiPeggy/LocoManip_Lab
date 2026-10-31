@@ -351,7 +351,10 @@ Artifacts (each verified by loading/playing it back, not by exit code):
    in `~/locomani/UniLab` link for link (identical to 0.000 mm), the AG95 linkage and both
    RealSense bodies are back (they were dropped with their parent frame), and the collision
    proxies moved to geom group 3 -- they had been *drawn* over the meshes, which is why the robot
-   looked like a grey box. **Viewer key conflict solved:** pressing W toggled the viewer's
+   looked like a grey box. The wrist d455 and the front d435 were drawn on their side because the
+   generator ignored each link's `<visual><origin>` (rpy = (90, 0, 90) for both cameras; every other
+   link happens to be identity) -- now honoured, and checked against the URDF chain rather than by
+   eye: the d455 optical +z is 0.0 deg from the tool axis. **Viewer key conflict solved:** pressing W toggled the viewer's
    wireframe because `pynput` only observes keys; `ViewerFocusGuard` hands the X input focus back
    to the launching window (and re-checks 4x/s), with `ViewerKeyPin` as a backstop. Measured on
    the picture itself: 38.0% of pixels changed without the guard, 0.0% with it.

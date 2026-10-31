@@ -2215,6 +2215,14 @@ action = filt.filter_action(policy(obs), vx_eff, wz_eff)  # 只可能改 action[
 机械臂、棕色货箱), 并补上了此前随父 frame 一起被丢掉的 **AG95 四连杆和两个 RealSense** 的网格 ——
 总质量因此从 175.86 变成 176.006 kg, 静止蠕动因此从 47.4 mm 变成 54.6 mm(见 16.6)。
 
+**相机朝向(同日第二个渲染 bug)**: 生成器只用了 link 坐标系, 忽略了 URDF 里每个 link 自己的
+`<visual><origin>`。绝大多数 link 恰好是单位变换, 但**两个 RealSense 不是** ——
+`d455_link` 与 `d435_link` 的视觉原点都是 `rpy=(90°, 0, 90°)`, 忽略它就把腕部相机画成了**朝侧面**。
+现在逐个解析并写到 geom 的 `pos/quat` 上。验证不靠肉眼: 按 URDF 的固定关节链把
+`d455_depth_optical_frame` 推算到 `cr10_Link6` 系, 其 +z(相机视线)与工具轴 +z 的夹角是 **0.0°**,
+即腕部相机本来就该正对工具方向; 视觉原点只是把网格摆进那个坐标系。
+这是纯视觉改动(`contype=0`), 物理与观测不受影响。
+
 ### 16.2 接口一致性: 五项, 全部对上
 
 `scripts/ranger_cr10/check_mujoco_interface.py` 在**活的 Isaac Lab 环境**里取状态, 逐项与 MuJoCo 对照

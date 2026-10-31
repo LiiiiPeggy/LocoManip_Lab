@@ -194,6 +194,8 @@ DROP_LINKS = {
 # The AG95 linkage: welded at 0, see the module docstring.
 WELD_JOINT_PREFIX = "gripper_"
 
+VISUAL_ORIGIN = {}  # link name -> (xyz, quat) from the URDF's <visual><origin>
+
 TCP_BODY = "cr10_Link6"
 TCP_OFFSET = (0.0, 0.00003, 0.14389)
 
@@ -228,6 +230,20 @@ def fmt(v):
 def parse_urdf():
     root = ET.parse(URDF).getroot()
     links = {ln.get("name"): ln for ln in root.findall("link")}
+    # A link's mesh is not necessarily drawn in the link frame: the URDF gives every <visual>
+    # its own <origin>. Ignoring it put the wrist RealSenses on their side -- both declare
+    # rpy = (90 deg, 0, 90 deg) -- while every other link happens to be identity.
+    for name, ln in links.items():
+        vis = ln.find("visual")
+        if vis is None:
+            continue
+        o = vis.find("origin")
+        if o is None:
+            continue
+        xyz = [float(v) for v in (o.get("xyz") or "0 0 0").split()]
+        rpy = [float(v) for v in (o.get("rpy") or "0 0 0").split()]
+        if any(abs(v) > 1e-9 for v in xyz) or any(abs(v) > 1e-9 for v in rpy):
+            VISUAL_ORIGIN[name] = (xyz, rpy_to_quat(rpy))
     joints = root.findall("joint")
     children = {}
     for j in joints:
@@ -423,7 +439,11 @@ def emit_link_geoms(w, link, name, indent):
     if name in MESH:
         asset, _ = mesh_asset_for(name)
         rgba = VIS_RGBA.get(name, DEFAULT_RGBA)
-        w(f'{pad}<geom name="{name}_vis" type="mesh" mesh="{asset}" class="visual" rgba="{rgba}"/>')
+        extra = ""
+        if name in VISUAL_ORIGIN:
+            pos, quat = VISUAL_ORIGIN[name]
+            extra = f' pos="{fmt(pos)}" quat="{fmt(quat)}"'
+        w(f'{pad}<geom name="{name}_vis" type="mesh" mesh="{asset}" class="visual" rgba="{rgba}"{extra}/>')
     spec = COLLISION.get(name)
     if spec is None or spec[0] == "mesh":
         if spec is not None:
