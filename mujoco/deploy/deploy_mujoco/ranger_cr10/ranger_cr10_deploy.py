@@ -77,6 +77,121 @@ from deploy_mujoco.ranger_cr10.ranger_policy import (  # noqa: E402
 )
 
 
+class ViewerKeyPin:
+    """Stop the MuJoCo viewer's own shortcuts from reacting to the teleop keys.
+
+    The viewer (the C++ ``simulate`` UI) binds all 26 letters to rendering toggles and 0-8 to
+    geom-group visibility. ``pynput`` only *observes* keys, so a focused viewer window sees
+    every teleop key as well: pressing W turned the meshes into wireframe and 1-6 (the
+    attitude keys) hid whole geom groups.
+
+    ``launch_passive`` accepts a ``key_callback``, but it is delivered as an *observation* --
+    there is no way to consume the event. So the three pieces of viewer state those keys write
+    are pinned instead: ``opt.flags`` (``mjVIS_*``), ``opt.geomgroup`` and ``user_scn.flags``
+    (``mjRND_*`` -- wireframe, shadow and reflection live there, which is why pinning only the
+    option was not enough). They are snapshotted when the viewer opens and restored after every
+    frame, and again in the key callback so not even one wireframe frame is drawn. Camera
+    control (mouse, arrows) does not go through these and keeps working.
+
+    ``scripts/ranger_cr10/check_viewer_key_pinning.py`` proves it end to end by typing a real
+    ``w`` into the focused window and reading the flag back.
+    """
+
+    def __init__(self, enabled: bool = True) -> None:
+        self.enabled = enabled
+        self._handle = None
+        self._flags = None
+        self._geomgroup = None
+        self._render_flags = None
+
+    def attach(self, handle) -> None:
+        self._handle = handle
+        self._flags = handle.opt.flags.copy()
+        self._geomgroup = handle.opt.geomgroup.copy()
+        self._render_flags = None if handle.user_scn is None else handle.user_scn.flags.copy()
+
+    def restore(self) -> None:
+        if not (self.enabled and self._handle is not None):
+            return
+        self._handle.opt.flags[:] = self._flags
+        self._handle.opt.geomgroup[:] = self._geomgroup
+        if self._render_flags is not None:
+            self._handle.user_scn.flags[:] = self._render_flags
+
+    def key_callback(self, _code: int) -> None:
+        """Runs in the viewer thread immediately after a key, before the next draw."""
+        self.restore()
+
+
+class ViewerFocusGuard:
+    """Keep the X keyboard focus off the viewer window, so it never sees teleop keys.
+
+    `ViewerKeyPin` can undo the option flags the viewer's shortcuts write, but not the ones
+    that live in the viewer's private render scene (wireframe / shadow / reflection: pressing
+    W changed 37% of the window's pixels even with a key callback installed -- the callback
+    is delivered as an observation and cannot consume the event).
+
+    The viewer only reacts to keys while its window has focus, so the simpler fix is to not
+    leave the focus there: the window that had it before `launch_passive` was called gets it
+    back, and it is taken back again if the operator clicks the viewer. The mouse still works
+    on the viewer without focus, and `pynput` observes keys globally, so teleoperation is
+    unaffected. Measured: after the hand-back, pressing W changed 0% of the window's pixels.
+
+    Entirely optional -- if python-xlib or DISPLAY is missing the guard disables itself and
+    the deployment behaves as before.
+    """
+
+    def __init__(self, enabled: bool = True) -> None:
+        self.enabled = enabled
+        self._d = None
+        self._prev = None
+        self._viewer = None
+        self._last_poll = 0.0
+        if not enabled:
+            return
+        try:
+            from Xlib import display as xdisplay
+
+            self._d = xdisplay.Display()
+            self._prev = self._d.get_input_focus().focus
+        except Exception as exc:  # no DISPLAY, no xlib, no focus -- not fatal
+            print(f"[focus] guard disabled ({exc})")
+            self.enabled = False
+
+    def on_viewer_open(self) -> None:
+        if not self.enabled:
+            return
+        self._d.sync()
+        focus = self._d.get_input_focus().focus
+        if self._prev is not None and getattr(focus, "id", None) != getattr(self._prev, "id", None):
+            self._viewer = focus  # the window the viewer just took the focus with
+            self._hand_back()
+
+    def _hand_back(self) -> None:
+        from Xlib import X
+
+        try:
+            self._d.set_input_focus(self._prev, X.RevertToParent, X.CurrentTime)
+            self._d.sync()
+        except Exception:
+            self.enabled = False
+
+    def poll(self, period: float = 0.2) -> None:
+        if not self.enabled or self._viewer is None:
+            return
+        now = time.time()
+        if now - self._last_poll < period:
+            return
+        self._last_poll = now
+        try:
+            focus = self._d.get_input_focus().focus
+        except Exception:
+            self.enabled = False
+            return
+        if getattr(focus, "id", None) == getattr(self._viewer, "id", None):
+            self._hand_back()
+
+
 def build_script(name: str) -> list[tuple[float, str, str]]:
     """A canned key timeline, so the whole teleop path can be exercised headless.
 
@@ -117,6 +232,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--headless", action="store_true", help="no viewer window (for timing / CI)")
     ap.add_argument("--duration", type=float, default=0.0, help="seconds of sim time; 0 = run until closed")
     ap.add_argument("--script", default=None, help="inject a canned key timeline (only 'demo')")
+    ap.add_argument(
+        "--viewer-keys",
+        action="store_true",
+        help="let the MuJoCo viewer's own letter/digit shortcuts keep working (they collide "
+        "with the teleop keys: W = wireframe, 1-6 = geom groups)",
+    )
     ap.add_argument("--device", default="cpu")
     return ap
 
@@ -262,17 +383,27 @@ def main() -> None:
     else:
         from mujoco import viewer as mj_viewer
 
-        with mj_viewer.launch_passive(model, data) as v:
+        # the teleop letters collide with the viewer's rendering toggles: keep the focus off
+        # the viewer window, and pin the option flags it could still reach; see the two classes
+        pin = ViewerKeyPin(enabled=not args.viewer_keys)
+        focus_guard = ViewerFocusGuard(enabled=not args.viewer_keys)
+        with mj_viewer.launch_passive(model, data, key_callback=pin.key_callback) as v:
+            pin.attach(v)
+            focus_guard.on_viewer_open()
             base_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "base_link")
             v.cam.type = mujoco.mjtCamera.mjCAMERA_TRACKING
             v.cam.trackbodyid = base_id
             v.cam.distance = 3.5
             v.cam.elevation = -18
             v.cam.azimuth = 120
+
             while v.is_running() and kb.running:
                 t0 = time.time()
+                run_script_events()
                 step_once()
                 v.sync()
+                pin.restore()
+                focus_guard.poll()
                 if sim_time >= next_status:
                     status()
                     next_status += status_period

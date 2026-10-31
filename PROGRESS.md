@@ -330,11 +330,11 @@ Artifacts (each verified by loading/playing it back, not by exit code):
    matches in speed (0.0619 vs 0.0622, 0.2873 vs 0.2891) and in distance travelled. So EE accuracy
    does **not** degrade in MuJoCo, and the three modes work (arm-only leaves the chassis at
    `<=0.0002 m/s`). The 4.5k filter is even more valuable here: the 30 s arm-moving static drift
-   falls 47.4 -> **0.5 mm** and the driven path 523 -> 3.9 mm, with identical low/normal/switch
+   falls 54.6 -> **0.5 mm** and the driven path 448 -> 3.9 mm, with identical low/normal/switch
    tracking and identical EE error. Two real defects were found and fixed on the way: MuJoCo
    writes a free joint's velocity in the **world** frame (the observation needs the body frame),
    and the analytic cylinder wheels had **no rolling resistance** (added 4.0 Nm, derived from
-   Isaac's measured droop: low-speed speed becomes 0.0619 vs 0.0622, static drift 81 -> 47 mm;
+   Isaac's measured droop: low-speed speed becomes 0.0619 vs 0.0622, static drift 100 -> 55 mm;
    `--wheel_frictionloss 0` reproduces the rigid-wheel model). **One correction to 4.5k**: its
    drift numbers averaged `base_x/base_y` over **16 envs** whose `base_com` randomisation differs,
    which cancelled the drift -- single-env the same script gives 13.6 mm, not 2.5 mm. The
@@ -345,8 +345,16 @@ Artifacts (each verified by loading/playing it back, not by exit code):
    sideways); on a 3 deg / 5 deg slope it creeps 37 / 66 mm per 30 s against 248-1683 / 303-5196
    unfiltered, and it is never worse than no filter in any cell -- so no "disable the lock on a
    slope" fallback is warranted, only the statement that its guarantee is flat-ground. Known residual differences: arm-driven
-   chassis creep 47 vs 13.6 mm, ride height 0.4125 vs 0.4071 m (a cylinder does not squash), and
+   chassis creep 54.6 vs 13.6 mm, ride height 0.4125 vs 0.4071 m (a cylinder does not squash), and
    no actuator delay (Isaac has 0-10 ms). Full detail: `docs/plans/teleop_plan.md` section 16.
+   **Model completeness (2026-10-31):** the MJCF now matches the URDF->MuJoCo conversion already
+   in `~/locomani/UniLab` link for link (identical to 0.000 mm), the AG95 linkage and both
+   RealSense bodies are back (they were dropped with their parent frame), and the collision
+   proxies moved to geom group 3 -- they had been *drawn* over the meshes, which is why the robot
+   looked like a grey box. **Viewer key conflict solved:** pressing W toggled the viewer's
+   wireframe because `pynput` only observes keys; `ViewerFocusGuard` hands the X input focus back
+   to the launching window (and re-checks 4x/s), with `ViewerKeyPin` as a backstop. Measured on
+   the picture itself: 38.0% of pixels changed without the guard, 0.0% with it.
 
 7. **New platform**: the port plan for the wheeled `rangerboxcr10lidar` (AgileX Ranger 4WS/4WD +
    Dobot CR10 + AG95) is at `docs/plans/plan.md`. **Stages 0-4 are done; stages 5-6 (MuJoCo, real-robot alignment) have not started.**

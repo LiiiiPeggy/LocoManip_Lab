@@ -109,13 +109,47 @@ MESH = {
     "cr10_Link5": "cr10_meshes/Link5.STL",
     "cr10_Link6": "cr10_meshes/Link6.STL",
     "gripper_base_link": "ag95_meshes/ag95_base_link.STL",
+    # The AG95 linkage. In the URDF each finger link names the same four meshes.
+    "gripper_finger1_knuckle_link": "ag95_meshes/crank_Link.STL",
+    "gripper_finger2_knuckle_link": "ag95_meshes/crank_Link.STL",
+    "gripper_finger1_finger_link": "ag95_meshes/rod_Link.STL",
+    "gripper_finger2_finger_link": "ag95_meshes/rod_Link.STL",
+    "gripper_finger1_inner_knuckle_link": "ag95_meshes/proximal_phalanx_Link.STL",
+    "gripper_finger2_inner_knuckle_link": "ag95_meshes/proximal_phalanx_Link.STL",
+    "gripper_finger1_finger_tip_link": "ag95_meshes/distal_phalanx_Link.STL",
+    "gripper_finger2_finger_tip_link": "ag95_meshes/distal_phalanx_Link.STL",
     "lidar_link0": "lidar_link0.STL",
     "d455_link": "realsense_meshes/d455.stl",
     "d435_link": "realsense_meshes/d435.stl",
     "box_link": "box_link.STL",
 }
 # mesh scale, as written in the URDF (the URDF mixes metres and millimetres)
-MESH_SCALE = {"gripper_base_link": 0.001, "d455_link": 0.001, "d435_link": 0.001}
+# the AG95 and RealSense meshes are authored in millimetres
+MESH_SCALE = {"d455_link": 0.001, "d435_link": 0.001}
+for _m in (
+    "gripper_base_link",
+    "gripper_finger1_knuckle_link",
+    "gripper_finger2_knuckle_link",
+    "gripper_finger1_finger_link",
+    "gripper_finger2_finger_link",
+    "gripper_finger1_inner_knuckle_link",
+    "gripper_finger2_inner_knuckle_link",
+    "gripper_finger1_finger_tip_link",
+    "gripper_finger2_finger_tip_link",
+):
+    MESH_SCALE[_m] = 0.001
+
+# Visual colours, following the conversion in ~/locomani/UniLab (assets/robots/ranger_box):
+# the steering forks and the tyre sidewalls are black, the wheels and the arm are light.
+VIS_RGBA = {
+    "fr_steering_link": "0.05 0.05 0.05 1",
+    "fl_steering_wheel_link": "0.05 0.05 0.05 1",
+    "rl_steering_wheel_link": "0.05 0.05 0.05 1",
+    "rr_steering_wheel_link": "0.05 0.05 0.05 1",
+    "gripper_base_link": "0.15 0.15 0.18 1",
+    "box_link": "0.55 0.42 0.25 1",
+}
+DEFAULT_RGBA = "0.82 0.82 0.84 1"
 
 # -- bodies that carry collision, and how ----------------------------------------------
 # name -> (kind, size/box params). Everything else is visual-only mass.
@@ -131,10 +165,10 @@ for _w in ("fr", "fl", "rl", "rr"):
 for _l in ("cr10_base_link", "cr10_Link1", "cr10_Link2", "cr10_Link3", "cr10_Link4", "cr10_Link5", "cr10_Link6"):
     COLLISION[_l] = ("mesh", None, None)
 
-# The bodies below exist only as mass (and, for the cameras, as something to look at).
-# They are rigidly attached to base_link in the URDF.
+# Frames with no inertial and no mesh. The camera *bodies* (``d455_link``, ``d435_link``)
+# stay: they carry a mesh and a mass, and dropping their parent frame used to take the whole
+# subtree with it, which is why the cameras were invisible before 2026-10-31.
 DROP_LINKS = {
-    "d455_bottom_screw_frame",
     "d455_depth_frame",
     "d455_depth_optical_frame",
     "d455_infra1_frame",
@@ -148,7 +182,6 @@ DROP_LINKS = {
     "d455_gyro_frame",
     "d455_gyro_optical_frame",
     "d455_imu_optical_frame",
-    "d435_bottom_screw_frame",
     "d435_depth_frame",
     "d435_depth_optical_frame",
     "d435_infra1_frame",
@@ -222,11 +255,16 @@ def build(links, joints, children):
     w("  <default>")
     w('    <geom friction="0.8 0.005 0.0001" solref="0.005 1" solimp="0.95 0.99 0.001"/>')
     w('    <default class="robot">')
-    # collide with the ground only; see the contype scheme in the docstring
-    w('      <geom contype="2" conaffinity="1"/>')
+    # collide with the ground only; see the contype scheme in the docstring.
+    # group 3 is not drawn by default (`geomgroup` 0-2 are), so the collision proxies stay
+    # invisible unless the operator switches group 3 on.
+    w('      <geom contype="2" conaffinity="1" group="3" rgba="0 1 0 0.25"/>')
     w("    </default>")
     w('    <default class="wheel">')
-    w(f'      <geom contype="4" conaffinity="1" condim="4" priority="1" friction="{WHEEL_FRICTION}"/>')
+    w(
+        f'      <geom contype="4" conaffinity="1" condim="4" priority="1" group="3" '
+        f'rgba="0 0.6 1 0.35" friction="{WHEEL_FRICTION}"/>'
+    )
     w("    </default>")
     w('    <default class="visual">')
     w('      <geom type="mesh" contype="0" conaffinity="0" group="2" material="gray"/>')
@@ -249,10 +287,9 @@ def build(links, joints, children):
     for name in ("gray", "black", "white"):
         rgba = {"gray": "0.67 0.69 0.77 1", "black": "0.05 0.05 0.05 1", "white": "0.95 0.95 0.95 1"}[name]
         w(f'    <material name="{name}" rgba="{rgba}"/>')
-    for link, path in MESH.items():
-        scale = MESH_SCALE.get(link)
+    for asset_name, (path, scale) in sorted(mesh_assets().items()):
         extra = f' scale="{scale} {scale} {scale}"' if scale else ""
-        w(f'    <mesh name="{link}" file="{path}"{extra}/>')
+        w(f'    <mesh name="{asset_name}" file="{path}"{extra}/>')
     w("  </asset>")
     w("")
 
@@ -364,14 +401,34 @@ def emit_joint(w, j, indent):
     w(f'{pad}<joint name="{name}" type="hinge" axis="{axis}"{lim} armature="{arm_val}" frictionloss="{fric}"/>')
 
 
+def mesh_asset_for(link):
+    """(asset name, scale) for a link's mesh: one asset per file, shared between links."""
+    path = MESH[link]
+    return Path(path).stem, MESH_SCALE.get(link)
+
+
+def mesh_assets():
+    """``{asset_name: (path, scale)}`` over every mesh the model references."""
+    out = {}
+    for link, path in MESH.items():
+        name, scale = mesh_asset_for(link)
+        if name in out and out[name] != (path, scale):
+            raise SystemExit(f"mesh asset name clash: {name}")
+        out[name] = (path, scale)
+    return out
+
+
 def emit_link_geoms(w, link, name, indent):
     pad = " " * indent
     if name in MESH:
-        w(f'{pad}<geom name="{name}_vis" type="mesh" mesh="{name}" class="visual"/>')
+        asset, _ = mesh_asset_for(name)
+        rgba = VIS_RGBA.get(name, DEFAULT_RGBA)
+        w(f'{pad}<geom name="{name}_vis" type="mesh" mesh="{asset}" class="visual" rgba="{rgba}"/>')
     spec = COLLISION.get(name)
     if spec is None or spec[0] == "mesh":
         if spec is not None:
-            w(f'{pad}<geom name="{name}_col" type="mesh" mesh="{name}" class="robot"/>')
+            asset, _ = mesh_asset_for(name)
+            w(f'{pad}<geom name="{name}_col" type="mesh" mesh="{asset}" class="robot"/>')
         return
     kind, size, pos = spec
     if kind == "box":

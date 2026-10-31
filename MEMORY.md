@@ -104,22 +104,30 @@ does fit in 48 GB (≈17.6 GB peak) and completes — it is valid, just not prop
 - Do **not** delete them either: they are still on disk, so B1/B2/AGO/GO1 still run locally. A fresh
   clone cannot run those six platforms. Rationale and trade-off: [PROCESS.md](PROCESS.md) §3.
 
-## The MuJoCo viewer steals the teleop keys (verified 2026-09-22)
+## The MuJoCo viewer steals the teleop keys — solved by handing the focus back (2026-10-31)
 
 MuJoCo's built-in viewer (the C++ `simulate` UI behind `mujoco.viewer.launch_passive`) binds plain
-letters to visualization toggles. The deploy scripts read teleop keys with `pynput`, which is a
-global **observer** — it does not consume the event — so a focused viewer window receives the same
-keystrokes and flips rendering flags. Control is unaffected; the picture is not.
+letters to visualization toggles and 0-8 to geom-group visibility. `pynput` is a global **observer**
+— it does not consume the event — so a focused viewer window receives the same keystrokes. Control
+is unaffected; the picture is not.
 
-Read from the tables inside the installed `libmujoco.so.3.13.0` (`mjVISSTRING` / `mjRNDSTRING`), not
-from docs. Overlaps that bite `go2_piper.py`: `W` wireframe (meshes go see-through and the collision
-geometry inside them becomes visible), `S` shadow, `A` auto-connect, `D` static body, `Q` camera,
-`E` equality, `R` reflection, `I` inertia, `J` joint, `L` additive, `K` skybox, `U` actuator,
-`O` perturb object.
+Read from the tables in the installed `libmujoco.so.3.13.0` (`mjVISSTRING` / `mjRNDSTRING`), not
+from docs. Overlaps: `W` wireframe, `S` shadow, `R` reflection, `L` additive, `K` skybox, `G` fog,
+`A` auto-connect, `D` static body, `Q` camera, `E` equality, `I` inertia, `J` joint, `U` actuator,
+`O` perturb object; `0`-`8` toggle geom groups. All 26 letters are bound, so letters cannot be
+remapped out of the conflict.
 
-All 26 letters are bound, so letter keys cannot be remapped out of the conflict — only digits,
-arrows and function keys are free. The cheap fix is focus, not code: keep the **terminal** focused
-while teleoperating.
+`launch_passive(key_callback=...)` receives the key (int ASCII) but **cannot consume it** — measured
+with the callback installed, pressing `w` still changed 37% of the window's pixels. Pinning
+`handle.opt.flags` is not enough either: wireframe/shadow/reflection live in `mjRND_*` flags inside
+the viewer's private scene, which no Python handle exposes.
+
+What works: keep the **X input focus off the viewer window**. `ViewerFocusGuard` in
+`mujoco/deploy/deploy_mujoco/ranger_cr10/ranger_cr10_deploy.py` records the focus owner before
+`launch_passive`, hands it back if the viewer took it, and re-checks 4x/s (mouse control does not
+need focus). `ViewerKeyPin` restores `opt.flags`/`opt.geomgroup` as a backstop.
+`scripts/ranger_cr10/check_viewer_key_pinning.py` verifies on the picture itself: 38.0% of pixels
+change without the guard, 0.0% with it.
 
 ## Where the design is documented
 
