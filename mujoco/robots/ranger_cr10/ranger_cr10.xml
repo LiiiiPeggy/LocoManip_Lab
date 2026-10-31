@@ -1,0 +1,208 @@
+<mujoco model="ranger_cr10">
+  <compiler angle="radian" meshdir="../../../rangerboxcr10lidar_description/meshes" autolimits="true"/>
+  <option timestep="0.005" integrator="implicitfast" cone="elliptic" impratio="100"/>
+  <size nconmax="200" njmax="400"/>
+
+  <default>
+    <geom friction="0.8 0.005 0.0001" solref="0.005 1" solimp="0.95 0.99 0.001"/>
+    <default class="robot">
+      <geom contype="2" conaffinity="1"/>
+    </default>
+    <default class="wheel">
+      <geom contype="4" conaffinity="1" condim="4" priority="1" friction="0.35 0.005 0.0001"/>
+    </default>
+    <default class="visual">
+      <geom type="mesh" contype="0" conaffinity="0" group="2" material="gray"/>
+    </default>
+    <default class="steer_act">
+      <position kp="300.0" kv="30.0" forcerange="-100.0 100.0"/>
+    </default>
+    <default class="wheel_act">
+      <velocity kv="60.0" forcerange="-150.0 150.0"/>
+    </default>
+    <default class="arm_act">
+      <position/>
+    </default>
+  </default>
+
+  <asset>
+    <material name="gray" rgba="0.67 0.69 0.77 1"/>
+    <material name="black" rgba="0.05 0.05 0.05 1"/>
+    <material name="white" rgba="0.95 0.95 0.95 1"/>
+    <mesh name="base_link" file="ranger_meshes/ranger_base_link.STL"/>
+    <mesh name="fr_steering_link" file="ranger_meshes/fr_steering_link.STL"/>
+    <mesh name="fl_steering_wheel_link" file="ranger_meshes/fl_steering_wheel_link.STL"/>
+    <mesh name="rl_steering_wheel_link" file="ranger_meshes/rl_steering_wheel_link.STL"/>
+    <mesh name="rr_steering_wheel_link" file="ranger_meshes/rr_steering_wheel_link.STL"/>
+    <mesh name="fr_wheel_link" file="ranger_meshes/fr_wheel_link.STL"/>
+    <mesh name="fl_wheel_link" file="ranger_meshes/fl_wheel_link.STL"/>
+    <mesh name="rl_wheel_link" file="ranger_meshes/rl_wheel_link.STL"/>
+    <mesh name="rr_wheel_link" file="ranger_meshes/rr_wheel_link.STL"/>
+    <mesh name="cr10_base_link" file="cr10_meshes/cr10_base_link.STL"/>
+    <mesh name="cr10_Link1" file="cr10_meshes/Link1.STL"/>
+    <mesh name="cr10_Link2" file="cr10_meshes/Link2.STL"/>
+    <mesh name="cr10_Link3" file="cr10_meshes/Link3.STL"/>
+    <mesh name="cr10_Link4" file="cr10_meshes/Link4.STL"/>
+    <mesh name="cr10_Link5" file="cr10_meshes/Link5.STL"/>
+    <mesh name="cr10_Link6" file="cr10_meshes/Link6.STL"/>
+    <mesh name="gripper_base_link" file="ag95_meshes/ag95_base_link.STL" scale="0.001 0.001 0.001"/>
+    <mesh name="lidar_link0" file="lidar_link0.STL"/>
+    <mesh name="d455_link" file="realsense_meshes/d455.stl" scale="0.001 0.001 0.001"/>
+    <mesh name="d435_link" file="realsense_meshes/d435.stl" scale="0.001 0.001 0.001"/>
+    <mesh name="box_link" file="box_link.STL"/>
+  </asset>
+
+  <worldbody>
+    <body name="base_link" pos="0 0 0.407100">
+      <freejoint name="root"/>
+      <geom name="base_link_vis" type="mesh" mesh="base_link" class="visual"/>
+      <geom name="base_link_col" type="box" size="0.651 0.4347 0.21755" pos="0 -0.0033 -0.0571" class="robot"/>
+      <inertial pos="-0.0169024483 0.00678181342 0.0577617034" mass="88.7576" fullinertia="1.71234483 4.9002791 6.39425408 0.0110513757 -0.0193888071 -5.41974668e-05"/>
+      <body name="fr_steering_link" pos="0.445 -0.28 0.0335" quat="1 0 0 0">
+        <joint name="fr_steering_joint" type="hinge" axis="0 0 -1" range="-1.57 1.57" armature="0.5" frictionloss="0.02"/>
+        <geom name="fr_steering_link_vis" type="mesh" mesh="fr_steering_link" class="visual"/>
+        <geom name="fr_steering_link_col" type="box" size="0.044 0.11665 0.13315" pos="0.0041 -0.0082 -0.173" class="robot"/>
+        <inertial pos="0.0001118 -0.0073218 -0.085228" mass="2.0957" fullinertia="0.0077827 0.0012664 0.0079221 1.2908e-08 7.5611e-07 -3.9878e-06"/>
+        <body name="fr_wheel_link" pos="0 0.001 -0.2918" quat="0.707105483 0.70710808 0 0">
+          <joint name="fr_wheel_joint" type="hinge" axis="0 0 1" armature="0.05" frictionloss="4.02"/>
+          <geom name="fr_wheel_link_vis" type="mesh" mesh="fr_wheel_link" class="visual"/>
+          <geom name="fr_wheel_link_col" type="cylinder" size="0.1531 0.1095" pos="0 0 0" class="wheel"/>
+          <inertial pos="-0.00095113 -1.6964e-07 0.0020954" mass="11.468" fullinertia="0.05332 0.080083 0.11423 3.0935e-09 8.2702e-07 2.1462e-07"/>
+        </body>
+      </body>
+      <body name="fl_steering_wheel_link" pos="0.445 0.28 0.0335" quat="1 0 0 0">
+        <joint name="fl_steering_wheel_joint" type="hinge" axis="0 0 -1" range="-1.57 1.57" armature="0.5" frictionloss="0.02"/>
+        <geom name="fl_steering_wheel_link_vis" type="mesh" mesh="fl_steering_wheel_link" class="visual"/>
+        <geom name="fl_steering_wheel_link_col" type="box" size="0.04405 0.12 0.13515" pos="0.0041 0.0104 -0.175" class="robot"/>
+        <inertial pos="0.00010411 0.0077919 -0.086394" mass="2.1046" fullinertia="0.0077836 0.0012676 0.007923 1.5708e-08 1.3527e-06 3.3293e-06"/>
+        <body name="fl_wheel_link" pos="0 -0.001 -0.29345" quat="0.707105483 0.70710808 0 0">
+          <joint name="fl_wheel_joint" type="hinge" axis="0 0 -1" armature="0.05" frictionloss="4.02"/>
+          <geom name="fl_wheel_link_vis" type="mesh" mesh="fl_wheel_link" class="visual"/>
+          <geom name="fl_wheel_link_col" type="cylinder" size="0.1531 0.1095" pos="0 0 0" class="wheel"/>
+          <inertial pos="0.000311408861 -1.69637665e-07 -0.00209855962" mass="11.4679" fullinertia="0.0533204705 0.0800825149 0.114229465 3.00515938e-09 8.26975779e-07 2.14912097e-07"/>
+        </body>
+      </body>
+      <body name="rl_steering_wheel_link" pos="-0.445 0.28 0.0335" quat="1 0 0 0">
+        <joint name="rl_steering_wheel_joint" type="hinge" axis="0 0 -1" range="-1.57 1.57" armature="0.5" frictionloss="0.02"/>
+        <geom name="rl_steering_wheel_link_vis" type="mesh" mesh="rl_steering_wheel_link" class="visual"/>
+        <geom name="rl_steering_wheel_link_col" type="box" size="0.04405 0.1172 0.1318" pos="0.0041 0.0076 -0.1717" class="robot"/>
+        <inertial pos="0.000104728166 0.00747335014 -0.0851648618" mass="2.09214" fullinertia="0.0077825571 0.00126619444 0.0079219848 1.57079408e-08 1.35270333e-06 3.32543441e-06"/>
+        <body name="rl_wheel_link" pos="0 -0.001 -0.29345" quat="0.707105483 0.70710808 0 0">
+          <joint name="rl_wheel_joint" type="hinge" axis="0 0 -1" armature="0.05" frictionloss="4.02"/>
+          <geom name="rl_wheel_link_vis" type="mesh" mesh="rl_wheel_link" class="visual"/>
+          <geom name="rl_wheel_link_col" type="cylinder" size="0.1531 0.1095" pos="0 0 0" class="wheel"/>
+          <inertial pos="0.000311408861 -1.69637666e-07 -0.00209855962" mass="11.4679" fullinertia="0.0533204705 0.0800825149 0.114229465 3.00515931e-09 8.26975779e-07 2.14912097e-07"/>
+        </body>
+      </body>
+      <body name="rr_steering_wheel_link" pos="-0.445 -0.28 0.0335" quat="1 0 0 0">
+        <joint name="rr_steering_wheel_joint" type="hinge" axis="0 0 -1" range="-1.57 1.57" armature="0.5" frictionloss="0.02"/>
+        <geom name="rr_steering_wheel_link_vis" type="mesh" mesh="rr_steering_wheel_link" class="visual"/>
+        <geom name="rr_steering_wheel_link_col" type="box" size="0.044 0.11665 0.13365" pos="0.0041 -0.0082 -0.1735" class="robot"/>
+        <inertial pos="0.000104728166 0.00747335014 -0.0851648618" mass="2.09214" fullinertia="0.0077825571 0.00126619444 0.0079219848 1.57079408e-08 1.35270333e-06 3.32543441e-06"/>
+        <body name="rr_wheel_link" pos="0 0.001 -0.2918" quat="0.707105483 0.70710808 0 0">
+          <joint name="rr_wheel_joint" type="hinge" axis="0 0 1" armature="0.05" frictionloss="4.02"/>
+          <geom name="rr_wheel_link_vis" type="mesh" mesh="rr_wheel_link" class="visual"/>
+          <geom name="rr_wheel_link_col" type="cylinder" size="0.1531 0.1095" pos="0 0 0" class="wheel"/>
+          <inertial pos="-0.000951130287 -1.69637666e-07 0.00209543087" mass="11.4679" fullinertia="0.0533204701 0.080082515 0.114229464 3.09346356e-09 8.27015235e-07 2.14615155e-07"/>
+        </body>
+      </body>
+      <body name="cr10_base_link" pos="0.2462 0 0.1" quat="1 0 0 0">
+        <geom name="cr10_base_link_vis" type="mesh" mesh="cr10_base_link" class="visual"/>
+        <geom name="cr10_base_link_col" type="mesh" mesh="cr10_base_link" class="robot"/>
+        <inertial pos="-0.0017435 -4.7141e-06 0.032774" mass="1.8265" fullinertia="0.0041731 0.0043128 0.0067702 5.9354e-07 2.52e-05 -5.4503e-07"/>
+        <body name="cr10_Link1" pos="0 0 0.1765" quat="1 0 0 0">
+          <joint name="cr10_joint1" type="hinge" axis="0 0 1" range="-3.92 0.94" armature="0.5" frictionloss="0.01"/>
+          <geom name="cr10_Link1_vis" type="mesh" mesh="cr10_Link1" class="visual"/>
+          <geom name="cr10_Link1_col" type="mesh" mesh="cr10_Link1" class="robot"/>
+          <inertial pos="-1.6635e-06 -0.010819 0.0028389" mass="4.1649" fullinertia="0.020714 0.018824 0.014575 -1.9343e-07 1.6036e-07 -9.6731e-05"/>
+          <body name="cr10_Link2" pos="0 0 0" quat="0.499998163 0.5 0.5 -0.500001837">
+            <joint name="cr10_joint2" type="hinge" axis="0 0 1" range="-1.57 1.57" armature="1.0" frictionloss="0.01"/>
+            <geom name="cr10_Link2_vis" type="mesh" mesh="cr10_Link2" class="visual"/>
+            <geom name="cr10_Link2_col" type="mesh" mesh="cr10_Link2" class="robot"/>
+            <inertial pos="-0.24631 3.5816e-07 0.19515" mass="11.314" fullinertia="0.033616 0.30683 0.29972 -8.2998e-07 -0.0033352 -6.6457e-08"/>
+            <body name="cr10_Link3" pos="-0.607 0 0" quat="1 0 0 0">
+              <joint name="cr10_joint3" type="hinge" axis="0 0 1" range="-2.86 2.86" armature="0.5" frictionloss="0.01"/>
+              <geom name="cr10_Link3_vis" type="mesh" mesh="cr10_Link3" class="visual"/>
+              <geom name="cr10_Link3_col" type="mesh" mesh="cr10_Link3" class="robot"/>
+              <inertial pos="-0.27085586 2.51446909e-07 0.0622960395" mass="4.89191" fullinertia="0.00715720724 0.239673426 0.238369168 -5.62017409e-07 -0.00257748069 9.26228296e-08"/>
+              <body name="cr10_Link4" pos="-0.568 0 0.191" quat="0.707105483 0 0 -0.70710808">
+                <joint name="cr10_joint4" type="hinge" axis="0 0 1" range="-3.14 3.14" armature="0.2" frictionloss="0.01"/>
+                <geom name="cr10_Link4_vis" type="mesh" mesh="cr10_Link4" class="visual"/>
+                <geom name="cr10_Link4_col" type="mesh" mesh="cr10_Link4" class="robot"/>
+                <inertial pos="-2.53137491e-07 0.00798724499 -0.0058907423" mass="1.16884" fullinertia="0.00292614933 0.00150052998 0.00273274944 8.20440076e-09 -8.19990423e-09 -5.44925219e-05"/>
+                <body name="cr10_Link5" pos="0 -0.125 0" quat="0.707105483 0.70710808 0 0">
+                  <joint name="cr10_joint5" type="hinge" axis="0 0 1" range="-3.14 3.14" armature="0.1" frictionloss="0.01"/>
+                  <geom name="cr10_Link5_vis" type="mesh" mesh="cr10_Link5" class="visual"/>
+                  <geom name="cr10_Link5_col" type="mesh" mesh="cr10_Link5" class="robot"/>
+                  <inertial pos="5.50699456e-07 -0.0145467578 -0.00454887087" mass="1.22303" fullinertia="0.00337905462 0.00149255574 0.00323300312 3.57819902e-08 -7.51828061e-09 8.41917919e-05"/>
+                  <body name="cr10_Link6" pos="0 0.1084 0" quat="0.707105483 -0.70710808 0 0">
+                    <joint name="cr10_joint6" type="hinge" axis="0 0 1" range="-3.14 3.14" armature="0.1" frictionloss="0.01"/>
+                    <geom name="cr10_Link6_vis" type="mesh" mesh="cr10_Link6" class="visual"/>
+                    <geom name="cr10_Link6_col" type="mesh" mesh="cr10_Link6" class="robot"/>
+                    <inertial pos="1.42987471e-10 2.29640695e-05 -0.020529778" mass="0.20544" fullinertia="0.000110115426 0.000110662466 0.000205184296 -8.21487876e-14 4.28615844e-14 3.68879933e-08"/>
+                    <site name="tcp" pos="0 3e-05 0.14389" size="0.01"/>
+                    <body name="gripper_base_link" pos="0 0 0" quat="1 0 0 0">
+                      <geom name="gripper_base_link_vis" type="mesh" mesh="gripper_base_link" class="visual"/>
+                      <inertial pos="0 0 0" mass="0.83416" fullinertia="0.0013016 0.00049972 0.001498 -6.9374e-07 5.9848e-07 2.0244e-07"/>
+                      <body name="gripper_finger1_knuckle_link" pos="-0.016 0 0.10586" quat="0.000796326711 0 0 0.999999683">
+                        <inertial pos="0 0 0" mass="0.011111" fullinertia="3.88172e-06 1.92174e-06 4.32374e-06 -2.29456e-13 8.33e-07 2.04435e-13"/>
+                        <body name="gripper_finger1_finger_link" pos="0.0292080078 0 -0.0227132622" quat="1 0 0 0">
+                          <inertial pos="0 0 0" mass="0.0222871" fullinertia="8.72836e-06 7.26157e-06 3.3425e-06 7.0843e-15 -2.18833e-06 7.6579e-15"/>
+                        </body>
+                      </body>
+                      <body name="gripper_finger2_knuckle_link" pos="0.016 0 0.10586" quat="1 0 0 0">
+                        <inertial pos="0 0 0" mass="0.011111" fullinertia="3.88172e-06 1.92174e-06 4.32374e-06 -2.29456e-13 8.33e-07 2.04435e-13"/>
+                        <body name="gripper_finger2_finger_link" pos="0.0292080078 0 -0.0227132622" quat="1 0 0 0">
+                          <inertial pos="0 0 0" mass="0.0222871" fullinertia="8.72836e-06 7.26157e-06 3.3425e-06 7.0843e-15 -2.18833e-06 7.6579e-15"/>
+                        </body>
+                      </body>
+                      <body name="gripper_finger1_inner_knuckle_link" pos="-0.016 0 0.10586" quat="0.000796326711 0 0 0.999999683">
+                        <inertial pos="0 0 0" mass="0.0318004" fullinertia="1.39848e-05 1.04943e-05 1.36183e-05 -9.54763e-15 -5.01422e-06 8.94585e-16"/>
+                        <body name="gripper_finger1_finger_tip_link" pos="0.0394969464 0 0.0382752038" quat="1 0 0 0">
+                          <inertial pos="0 0 0" mass="0.0124305" fullinertia="2.84217e-06 3.03961e-06 1.11815e-06 -2.48048e-15 8.24539e-07 2.16427e-13"/>
+                        </body>
+                      </body>
+                      <body name="gripper_finger2_inner_knuckle_link" pos="0.016 0 0.10586" quat="1 0 0 0">
+                        <inertial pos="0 0 0" mass="0.0318004" fullinertia="1.39848e-05 1.04943e-05 1.36183e-05 -9.54763e-15 -5.01422e-06 8.94585e-16"/>
+                        <body name="gripper_finger2_finger_tip_link" pos="0.0394969464 0 0.0382752038" quat="1 0 0 0">
+                          <inertial pos="0 0 0" mass="0.0124305" fullinertia="2.84217e-06 3.03961e-06 1.11815e-06 -2.48048e-15 8.24539e-07 2.16427e-13"/>
+                        </body>
+                      </body>
+                    </body>
+                  </body>
+                </body>
+              </body>
+            </body>
+          </body>
+        </body>
+      </body>
+      <body name="lidar_link0" pos="0.52588 0 0.16587" quat="1 0 0 0">
+        <geom name="lidar_link0_vis" type="mesh" mesh="lidar_link0" class="visual"/>
+        <inertial pos="-0.0231388361 -1.89668118e-05 -0.0243541981" mass="0.234462" fullinertia="0.000614236987 0.000436563789 0.000900101034 6.44472699e-08 -4.38104203e-05 8.364185e-09"/>
+      </body>
+      <body name="box_link" pos="0 0 0.09" quat="1 0 0 0">
+        <geom name="box_link_vis" type="mesh" mesh="box_link" class="visual"/>
+        <inertial pos="-0.112214194 0.00944303076 0.105632229" mass="6.8272" fullinertia="0.254797604 0.203064909 0.41437646 -2.17109958e-06 4.07636435e-05 -1.33832322e-07"/>
+      </body>
+    </body>
+  </worldbody>
+
+  <actuator>
+    <position name="fr_steering_joint_pos" joint="fr_steering_joint" class="steer_act" ctrlrange="-1.57 1.57"/>
+    <velocity name="fr_wheel_joint_vel" joint="fr_wheel_joint" class="wheel_act" ctrlrange="-20.0 20.0"/>
+    <position name="fl_steering_wheel_joint_pos" joint="fl_steering_wheel_joint" class="steer_act" ctrlrange="-1.57 1.57"/>
+    <velocity name="fl_wheel_joint_vel" joint="fl_wheel_joint" class="wheel_act" ctrlrange="-20.0 20.0"/>
+    <position name="rl_steering_wheel_joint_pos" joint="rl_steering_wheel_joint" class="steer_act" ctrlrange="-1.57 1.57"/>
+    <velocity name="rl_wheel_joint_vel" joint="rl_wheel_joint" class="wheel_act" ctrlrange="-20.0 20.0"/>
+    <position name="rr_steering_wheel_joint_pos" joint="rr_steering_wheel_joint" class="steer_act" ctrlrange="-1.57 1.57"/>
+    <velocity name="rr_wheel_joint_vel" joint="rr_wheel_joint" class="wheel_act" ctrlrange="-20.0 20.0"/>
+    <position name="cr10_joint1_pos" joint="cr10_joint1" class="arm_act" kp="1500.0" kv="100.0" forcerange="-150.0 150.0" ctrlrange="-3.92000 0.94000"/>
+    <position name="cr10_joint2_pos" joint="cr10_joint2" class="arm_act" kp="4000.0" kv="200.0" forcerange="-150.0 150.0" ctrlrange="-1.57000 1.57000"/>
+    <position name="cr10_joint3_pos" joint="cr10_joint3" class="arm_act" kp="3000.0" kv="150.0" forcerange="-100.0 100.0" ctrlrange="-2.86000 2.86000"/>
+    <position name="cr10_joint4_pos" joint="cr10_joint4" class="arm_act" kp="800.0" kv="40.0" forcerange="-50.0 50.0" ctrlrange="-3.14000 3.14000"/>
+    <position name="cr10_joint5_pos" joint="cr10_joint5" class="arm_act" kp="500.0" kv="25.0" forcerange="-50.0 50.0" ctrlrange="-3.14000 3.14000"/>
+    <position name="cr10_joint6_pos" joint="cr10_joint6" class="arm_act" kp="300.0" kv="15.0" forcerange="-30.0 30.0" ctrlrange="-3.14000 3.14000"/>
+  </actuator>
+
+  <keyframe><key name="home" qpos="0 0 0.4071 1 0 0 0 0 0 0 0 0 0 0 0 0.6 1 -2.4 0 1.4 0" ctrl="0 0 0 0 0 0 0 0 0.6 1 -2.4 0 1.4 0"/></keyframe>
+</mujoco>

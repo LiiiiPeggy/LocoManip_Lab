@@ -2173,3 +2173,267 @@ action = filt.filter_action(policy(obs), vx_eff, wz_eff)  # 只可能改 action[
 ```
 
 产物: `outputs/base_drift/{db001,db002,db005}/{base_drift.json,trace_*.csv}`。
+
+---
+
+## 16. 阶段 4.6 MuJoCo Sim-to-Sim 部署(2026-10-31)
+
+**目标**: 把 4.5j 的 `model_5999.pt`(统一 8 维 Actor)原样搬进 MuJoCo, 用**同一份**观测构造、
+同一套动作映射、同一个零速滤波器跑闭环, 并用已存在的 Isaac Lab 协议逐项对照。
+不训练、不使用 IK、不修改观测或动作定义。
+
+### 16.1 模型从 URDF 生成, 不手抄
+
+仓库里原本没有任何 Ranger+CR10 的 MuJoCo 模型。新增
+`mujoco/robots/ranger_cr10/build_mjcf.py` 从**Isaac 自己用的那份** URDF
+(`source/.../assets/ranger_cr10/ranger_cr10_converted.urdf`) 生成 `ranger_cr10.xml`:
+每个 body 的质量/质心/惯量、每个 joint 的 origin/rpy/axis/limit 都是解析出来的, 不是手打的。
+这样"两个仿真器的模型不一样"就不可能来自转录错误。
+
+刻意不同于 URDF 的三处, 都写进了脚本的 docstring:
+
+- **碰撞体**: 底盘/转向节用盒、车轮用圆柱(尺寸取自 mesh 包围盒), 手臂各连杆用 mesh 凸包。
+  URDF 的底盘碰撞 mesh 是 L 形, MuJoCo 的 mesh 碰撞是凸包, 直接沿用会到处穿模。
+- **自碰撞关闭**: 与 Isaac 的 `enabled_self_collisions=False` 一致, 用 `contype/conaffinity` 分组实现
+  (底盘 `2/1`、车轮 `4/1`、地面 `1/7`)。底盘盒在空间上与车轮重叠, 这个分组是必须的。
+- **夹爪焊死**: Isaac 用 8 个驱动 + PhysX mimic 把 AG95 保持在 0(闭合), 这里直接省掉这 8 个自由度;
+  TCP 是 `cr10_Link6` 上的虚拟点, 策略看不到手指。
+
+执行器全部按 `ranger_cr10_articulation_cfg.py` 的数值配置: 转向位置伺服 kp300/kv30/±100 Nm、
+车轮速度伺服 kv60/±150 Nm、六个臂关节各自 kp/kv/力矩上限、joint armature 与 bearing 摩擦照抄。
+物理 200 Hz(`timestep=0.005`, `implicitfast`), 策略 10 Hz(`decimation=20`)。
+
+模型自检: `nq=21, nu=14, 总质量 175.86 kg`(URDF 求和 176.0, 差额是焊掉的夹爪连杆之外的无惯量 frame);
+静止时 `base_link` 落在 0.4125 m, Isaac 是 0.4071 m —— **5.4 mm 的差来自轮胎**: Isaac 是 mesh 胎压进地面,
+这里是解析圆柱。这个差在 16.6 的滚动阻力里一并讨论。
+
+### 16.2 接口一致性: 五项, 全部对上
+
+`scripts/ranger_cr10/check_mujoco_interface.py` 在**活的 Isaac Lab 环境**里取状态, 逐项与 MuJoCo 对照
+(结果写 `outputs/mujoco_interface/interface_check.json`):
+
+| 检查 | 做法 | 结果 |
+|---|---|---|
+| 观测拼接 | Isaac 的 117 维策略观测 vs 用文档公式从 `robot.data` 重组 | 八个块全部 `max|diff| <= 3.7e-10` |
+| MuJoCo 观测采样 | 同一状态(根位姿/速度、14 个关节位置速度、两个命令、上一步动作)写进 MuJoCo 再组装 | `max|diff| = 2.5e-8`(float32 精度) |
+| 正运动学 | 同一关节构型下 `base_link` 系里的 TCP | 位置 **0.002 mm**, 姿态 **0.0001°** |
+| 动作映射 | 256 组随机 raw action, `BaseVelocityAction` vs `ChassisAction` | 转向 2.3e-7 rad, 轮速 6.1e-7 rad/s, `(vx,wz)` 3.9e-8 |
+| 确定性 Actor | 同一 117 维观测, Isaac 侧 MLP vs 部署侧加载器 | `max|diff| = 0` |
+
+手臂关节的取用顺序也是这里确认的: 关节表的内部顺序是
+`cr10_joint1, fl_steering, fr_steering, ..., cr10_joint2, ...`(混合排列),
+而 `SceneEntityCfg(joint_names=ARM_JOINT_NAMES)` 解析出来是 `cr10_joint1..6` 的**名字顺序**,
+MuJoCo 侧按名字取, 所以两边一致 —— 这一条如果错了, 16.3 的所有数字都会是垃圾。
+
+**一个被验证的约定**: MuJoCo 自由关节的 6 个速度写在**世界系**(设 yaw=90°、`qvel[0]=1`, 机身沿世界 +x 走),
+而观测要的是机身系, 所以代码里显式做 `R^T @ qvel`。
+`mj_objectVelocity(..., flg_local=1)` 给出的符号与之相反, 已弃用并在代码里写明。
+
+### 16.3 部署入口与键盘遥操作
+
+- `mujoco/deploy/deploy_mujoco/ranger_cr10/ranger_policy.py` —— 117 维观测构造、`ChassisAction`
+  (逐行移植 `BaseVelocityAction`)、TCP、Actor 加载(rsl_rl ckpt 或 TorchScript)。
+- `ranger_cr10_deploy.py` —— 交互入口, 直接加载 `model_5999.pt`(取网络均值, 不含 log_std),
+  键盘用**同一份** `keyboard_teleop.py`, 滤波用**同一份** `scripts/ranger_cr10/base_command_filter.py`。
+- `config.yaml` —— 模型/策略路径、`decimation`、滤波四参数、键盘速率。滤波默认开启(0.02/0.02/锁定/无迟滞)。
+
+键位与 4.5 一致(W/S 前后、Q/E 转、I/K/J/L/U/O 六轴平移、1-6 姿态、R 回零)。
+状态行 5 Hz 打印: 外部命令、滤波后命令、实际机体系速度、EE 偏移与 RPY、**当前 EE 位置/姿态误差**、滤波器开关。
+
+**键盘端到端实测**(`--headless --script demo`, 13 s):
+
+| 时间 | 按键 | 观测到 |
+|---|---|---|
+| 1.0 s | 按住 W | `vx` 命令 0.25 -> 0.50, 实际 0.30 -> 0.44 m/s |
+| 3.0 s | 松开 W | 命令 0.30 -> 0, 实际 0.35 -> 0(0.5 s 内) |
+| 4.0 s | 按住 I | EE 偏移 x 0.02 -> 0.12(限位), 到达训练盒边界后误差升到 79 mm(已知够不到) |
+| 6.5 s | 按 2 | roll +5.0°(离散键一次一步) |
+| 7.6 s | 按住 Q | `wz` 0 -> 0.50, 实际 0.08 -> 0.42 rad/s |
+| 10.1 s | 按 R | 速度**立即**归零; EE 目标 0.12 -> 0 平滑回中(约 1.0 s), 误差回到 13.8 mm |
+
+按键处理在 `pynput` 的独立线程里, 主循环只做一次加锁读取, 不阻塞物理步或推理;
+MuJoCo 自带的 viewer 也会吃字母键, 使用说明里要求**保持终端焦点**(MEMORY.md 里那条已知现象)。
+
+viewer 窗口在本机可以正常打开并实时运行(已实测 2 s), 但 `launch_passive` 退出时的 GL 清理会**段错误**
+——用一个不含任何策略的裸 `launch_passive` 循环同样复现, 默认 GL 后端与 `MUJOCO_GL=egl` 都一样, 所以是
+环境问题而不是本脚本的问题。入场脚本在打印完总结后直接 `os._exit(0)`, 否则每次退出的返回码都是 139。
+
+### 16.4 三模式闭环(MuJoCo)
+
+`mujoco/deploy/deploy_mujoco/ranger_cr10/teleop_eval.py --suite modes`, 每段命令保持 6 s 或 4 s,
+数值取该段最后 5 步(收敛后)。滤波器关/开各跑一遍:
+
+| 场景 | 实际 \|v\| (m/s) | \|vx 误差\| | \|wz 误差\| | EE 位置 | EE 姿态 | 30s 漂移(关->开) |
+|---|---:|---:|---:|---:|---:|---:|
+| A1 前进 0.25 | 0.297 | 0.049 | 0.011 -> 0.000 | 12.3 mm | 1.09° | 864 -> 862 mm |
+| A2 后退 -0.25 | 0.294 | 0.046 | 0.011 -> 0.000 | 14.9 mm | 1.59° | 854 -> 857 mm |
+| A3 原地转 0.15 | 0.004 | 0.001 | 0.015 | 11.3 mm | 1.19° | 3 -> 3 mm(转过 45.9°) |
+| A4 低速 0.05/0.03 | 0.062 | 0.012 | 0.008 | 13.1 mm | 1.22° | 180 -> 180 mm |
+| B1 EE X +0.10 | 0.000 | — | — | 67.0 mm | 0.87° | 7.8 -> **0.1** mm |
+| B2 EE Y -0.10 | 0.000 | — | — | 43.1 mm | 1.23° | 6.7 -> **0.1** mm |
+| B3 EE Z +0.08 | 0.000 | — | — | 22.4 mm | 1.42° | 0.0 -> 0.1 mm |
+| B4 roll +0.20 | 0.000 | — | — | 24.7 mm | 0.42° | 0.0 -> 0.1 mm |
+| B5 pitch -0.20 | 0.000 | — | — | 22.1 mm | 1.37° | 0.0 -> 0.1 mm |
+| B6 yaw +0.25 | 0.000 | — | — | 19.8 mm | 1.57° | 0.0 -> 0.1 mm |
+| B7 组合位姿 | 0.000 | — | — | 69.4 mm | 0.24° | 0.1 -> 0.1 mm |
+| C1 vx0.25 wz0.15 roll0.2 | 0.283 | 0.036 | 0.004 | 30.3 mm | 0.79° | 817 mm |
+| C2 vx0.25 wz-0.12 六维 | 0.321 | 0.074 | 0.009 | 26.1 mm | 1.49° | 932 mm |
+| C3 vx-0.20 wz0.15 六维 | 0.252 | 0.055 | 0.008 | 39.5 mm | 2.13° | 730 mm |
+
+读法与 4.5i/4.5j 的表一致: **B 模式的底盘确实静止**(|v| <= 0.0002 m/s;关滤波时 0.004-0.02 m/s),
+六个位姿轴可以独立变化, C 模式的底盘速度跟踪与 A 模式同一水平。
+B1/B7 的 67-69 mm 是**策略本身的够不到**, 不是 MuJoCo 的: 同一个 `+0.10 m` 前伸命令在 Isaac 的 C2 里也是 62 mm。
+A3 的 `vx` 命令为 0 而 `|v|=0.004` 是原地转时轮胎的侧向蠕动, 位置几乎不变(3 mm)。
+
+### 16.5 与 Isaac Lab 对照: 三个固定命令协议
+
+同一条命令、同一段时长、同一个起步状态。Isaac 侧的数字来自本次新跑的
+`check_base_drift.py --num_envs 1`(`outputs/base_drift/db_1env`)与
+`check_teleop_stage45i.py` 的 C2(`outputs/stage45j/ppo/stage45i.json`)。
+
+**C2 收敛(14 条固定命令, 2.5 s 中位数)**
+
+| | Isaac Lab | MuJoCo | 差 |
+|---|---:|---:|---:|
+| 2.5 s 姿态误差 | 1.37° | 1.39° | +0.02° |
+| 位置误差 | 25.9 mm | 25.6 mm | -0.3 mm |
+| 抖动 | 0.0024° | 0.003° | — |
+
+**C2b(底盘+机械臂同时: vx 0.25 / wz 0.15, 姿态命令 roll +0.2)**
+
+| | Isaac Lab | MuJoCo |
+|---|---:|---:|
+| 实际 vx | 0.280 | 0.284 |
+| 实际 wz | 0.140 | 0.150 |
+| EE 姿态 | 0.72° | 0.79° |
+| EE 位置 | 31.3 mm | 30 mm |
+
+**速度跟踪与 15 s 行驶(与 `check_base_drift.py` 的 `low`/`normal`/`switch` 同协议)**
+
+| 场景 | Isaac 实际 vx | MuJoCo | Isaac 漂移 | MuJoCo | Isaac 偏航 | MuJoCo |
+|---|---:|---:|---:|---:|---:|---:|
+| low 0.05/0.03 | 0.0622 | 0.0619 | 465 mm | 457 mm | +9.49° | +9.52° |
+| normal 0.25/0.15 | 0.2891 | 0.2873 | 2017 mm | 2015 mm | +62.3° | +65.2° |
+| switch 0<->0.20 | 0.1149 | 0.1195 | 1139 mm | 1164 mm | +26.9° | +27.1° |
+
+**这里必须纠正 4.5k 的一个测量偏差**: 4.5k 的 `check_base_drift.py` 跑的是 **16 个环境**, 而 `base_x/base_y/yaw`
+取的是**16 个环境的均值**; 16 个环境的 `base_com`/外力随机化不同, 漂移方向也不同, 平均之后漂移被抵消,
+于是"30 s 净漂移 2.5 mm"。**单环境**重跑同一脚本得到 **13.6 mm**, 而锁定时 1 环境 0.36 mm / 16 环境 0.43 mm。
+也就是说 4.5k 的结论(锁定把漂移压到约 1/3)方向正确, 但**绝对数值被平均效应低估了约 5 倍**。
+今后凡是"净漂移"类指标必须在单环境上测, 或者报告 1 环境与 N 环境的两个数。
+
+### 16.6 零速漂移与滤波器(MuJoCo)
+
+同一组 `static` 场景(30 s, 底盘命令恒为 0, 末端目标循环 6 个位姿), 三种滤波配置:
+
+| 指标 | 无滤波 | 输入死区 | 输入死区+零速锁定 | Isaac(1 环境, 锁定) |
+|---|---:|---:|---:|---:|
+| 静止线速度 \|v\| (m/s) | 0.0232 | 0.0232 | **0.0001** | 0.0057 |
+| 静止角速度 \|wz\| (rad/s) | 0.0150 | 0.0150 | **0.0000** | 0.0036 |
+| 30 s 净漂移 | 47.4 mm | 47.4 mm | **0.5 mm** | 0.36 mm |
+| 累计路径长度 | 523 mm | 523 mm | **3.9 mm** | — |
+| 偏航变化 | -2.54° | -2.54° | **0.00°** | -0.01° |
+| EE 位置 / 姿态 | 37.8 mm / 1.34° | 37.8 / 1.34 | 37.9 / 1.34 | 40.1 / 1.73 |
+
+结论与 4.5k 一致, 而且在 MuJoCo 里**强得多**: 净漂移 47.4 -> 0.5 mm(95 倍), 路径长度 523 -> 3.9 mm,
+偏航 2.5° -> 0°, EE 分毫未变(机械臂六个通道在代码层面不经过滤波器)。
+`static_near`(命令 0.010/0.012, 即"操作杆没回零")同样从 117.0 mm 降到 **0.4 mm**。
+正常行驶不受影响: `low`/`normal`/`switch` 三行在开/关滤波下数值完全一致(A4 0.0621 vs 0.0621),
+因为命令远高于死区, 锁定条件不成立。
+
+**残留风险的确认**: 锁定把"保持位置"完全交给轮胎摩擦。MuJoCo 里锁定后的残余 0.5 mm/30 s
+就是机械臂反作用力推动车轮的极限, 与 Isaac 的 0.36 mm 同量级。坡道与低摩擦的作用见 16.8。
+
+### 16.7 滚动阻力的修改前后(唯一调整过的 MuJoCo 物理参数)
+
+车轮在 MuJoCo 里是**数学圆柱**(滚动阻力为 0), 在 Isaac 里是**压进地面的 mesh 胎**。
+这个差别在低速端非常明显, 也是唯一需要调整的物理参数。量化方法: 从 Isaac 的稳态下垂反推
+—— 轮速指令 0.39 rad/s 实际到 0.295、2.0 rad/s 实际到 1.79, 用速度伺服增益 60 折算成
+5.7 Nm 与 12.7 Nm 的负载力矩, 拟合"库仑 + 粘性"两项约为 4 Nm 与 4 Nm·s/rad。
+只加入库仑项(`frictionloss=4.02`, 粘性项等于抬高伺服增益, 没有加):
+
+| 指标 | 无滚动阻力 | **加 4 Nm 后** | Isaac Lab |
+|---|---:|---:|---:|
+| 0.05 m/s 命令的实际速度 | 0.0711 | **0.0619** | 0.0622 |
+| 0.25 m/s 命令的实际速度 | 0.2960 | **0.2873** | 0.2891 |
+| `low` 场景 15 s 漂移 | 524.5 mm | **456.9 mm** | 465.3 mm |
+| `normal` 场景 15 s 漂移 | 2070.8 mm | **2015.4 mm** | 2017.4 mm |
+| `static_near` 30 s 漂移 | 256.4 mm | **117.0 mm** | 0.0 mm |
+| `static`(手臂动)30 s 漂移 | 81.1 mm | **47.4 mm** | 13.6 mm |
+
+`build_mjcf.py --wheel_frictionloss 0` 可复现"纯刚体轮"模型, 上表左列即该配置。
+它**不是**为了把 MuJoCo 调到像 Isaac 而调参: 这是一项有物理含义、有测量来源的缺项补齐,
+而且加了它之后剩下的差异(静止漂移 47 vs 13.6 mm)仍在, 说明残余差异另有来源(解析圆柱 vs mesh 胎、
+MuJoCo 没有执行器延迟而 Isaac 有 0-10 ms、接触求解器不同)。
+
+### 16.8 剩余差异与其来源
+
+| 现象 | 数值 | 判断 |
+|---|---|---|
+| 手臂运动引起的底盘蠕动 | MuJoCo 47.4 mm / 30 s, Isaac 13.6 mm | 真实动力学差异: 圆柱轮 vs 变形胎;两侧都被零速锁定压到 ~0.5 mm |
+| 静止高度 | 0.4125 m vs 0.4071 m | 圆柱不压扁, 5.4 mm |
+| 执行器延迟 | 0  vs  0-10 ms(臂 0-20 ms) | Isaac 的 DelayedPDActuator 没有移植; 慢变负载下影响可忽略 |
+| 瞬态超调(A1 的 vx_err 0.049) | 0.25 -> 一直冲到 0.297 | 两仿真器同向(Isaac 0.289); 属于策略本身的跟踪偏差, 不是部署错误 |
+
+### 16.9 结论(对应任务书八个问题)
+
+**1. 4.6 MuJoCo 是否部署成功?** 是。入口:
+
+```bash
+# 交互(需要显示; 保持终端焦点)
+python mujoco/deploy/deploy_mujoco/ranger_cr10/ranger_cr10_deploy.py
+# 无滤波对照 / 无头
+python .../ranger_cr10_deploy.py --no-filter
+python .../ranger_cr10_deploy.py --headless --script demo --duration 13
+# 三套评估
+python .../teleop_eval.py --suite all --out outputs/stage46_mujoco
+```
+
+**2. 观测/动作接口是否一致?** 一致, 而且是逐项量出来的: 观测拼接 `<=3.7e-10`、MuJoCo 采样 `<=2.5e-8`、
+TCP 正运动学 0.002 mm/0.0001°、256 组动作映射 `<=6.1e-7`、确定性 Actor 完全一致。
+
+**3. 三模式控制性能?** A 模式底盘跟踪 `|vx 误差|` 0.012-0.049 m/s(低速/正常), EE 11-15 mm / 1.1-1.6°;
+B 模式底盘实际速度 `<=0.0002 m/s`, 六轴独立, EE 20-69 mm / 0.2-1.6°;
+C 模式底盘 0.036-0.074 m/s、EE 26-40 mm / 0.8-2.1°。
+
+**4. EE 精度相较 Isaac 退化多少?** **没有退化。** 固定命令 2.5 s 收敛: 姿态 1.39° vs 1.37°, 位置 25.6 vs 25.9 mm;
+C2b 30 vs 31 mm / 0.79° vs 0.72°; 各漂移场景的平均 EE 误差 MuJoCo 还低 2-3 mm(11.7-13.4 mm vs 14.6-15.9)。
+
+**5. 零速滤波在 MuJoCo 是否有效?** 非常有效: 30 s 净漂移 47.4 -> **0.5 mm**, 路径长度 523 -> 3.9 mm,
+偏航 2.54° -> 0°, 而低速/正常/切换三类行驶的跟踪完全不变, 机械臂六维误差不变。
+`static_near` 从 117 mm 降到 0.4 mm。
+
+**6. 键盘遥操作是否完整可用?** 是。W/S/Q/E 速度、I/K/J/L/U/O 平移、1-6 姿态、R 回零全部在
+16.3 的脚本化时间线上实测生效; 底盘松键回零、EE 松键保持、R 立即停底盘并平滑回中。
+
+**7. 是否发现必须修复的 Sim-to-Sim 问题?** 两件已被修正: (a) MuJoCo 自由关节速度是世界系,
+观测必须显式转机身系(错误用法会静默给出反向的 `base_ang_vel`/`base_lin_vel`); (b) 车轮缺少滚动阻力,
+已在模型里补上并记录前后差异。另有一件**不是 MuJoCo 的问题但必须写清楚**: 4.5k 的漂移数字被
+16 环境平均低估了约 5 倍(13.6 mm vs 2.5 mm), 之后的漂移指标一律按单环境报告。
+
+**8. Git**: 本阶段改动见 16.10 的产物清单, 提交在 `rangercr10-teleop`; `M agx` 未暂存未提交,
+`rangercr10-world` 未改动。
+
+### 16.10 产物与复现
+
+| 文件 | 作用 |
+|---|---|
+| `mujoco/robots/ranger_cr10/build_mjcf.py` | URDF -> MJCF 生成器(含滚动阻力参数) |
+| `mujoco/robots/ranger_cr10/ranger_cr10.xml`, `scene.xml` | 生成的模型与场景(地面 0.35 摩擦) |
+| `mujoco/deploy/deploy_mujoco/ranger_cr10/ranger_policy.py` | 117 维观测、`ChassisAction`、TCP、Actor 加载 |
+| `mujoco/deploy/deploy_mujoco/ranger_cr10/ranger_cr10_deploy.py` | 键盘遥操作入口 |
+| `mujoco/deploy/deploy_mujoco/ranger_cr10/teleop_eval.py` | 三套无头评估(drift / modes / convergence) |
+| `mujoco/deploy/deploy_mujoco/ranger_cr10/config.yaml` | 策略、场景、滤波器、键盘参数 |
+| `scripts/ranger_cr10/check_mujoco_interface.py` | 五项接口一致性检查(需要 Isaac Lab) |
+
+产物数据: `outputs/mujoco_interface/interface_check.json`; `outputs/stage46_mujoco/mujoco_{drift,modes,convergence}.json`
+与 `trace_*.csv`; `--tag no_rolling` 一组为无滚动阻力对照。
+
+```bash
+# 重新生成模型
+python mujoco/robots/ranger_cr10/build_mjcf.py
+# 接口一致性(约 1 分钟, 需要 GPU)
+python scripts/ranger_cr10/check_mujoco_interface.py
+# 三套评估(约 6 分钟, 纯 CPU)
+python mujoco/deploy/deploy_mujoco/ranger_cr10/teleop_eval.py --suite all
+```

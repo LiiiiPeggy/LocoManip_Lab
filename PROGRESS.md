@@ -14,8 +14,8 @@ kept on separate branches so they never share a task id, experiment name or log 
 - `rangercr10-world` — an end-effector target frozen in the *world*; the policy decides `(vx, wz)`
   itself. Stages 0-4 done and accepted (below); stages 5-6 (MuJoCo, real-robot alignment) not started.
 - `rangercr10-teleop` — a *body-relative* end-effector target plus a human velocity command, the
-  GO2-PIPER teleoperation shape. **Trained and accepted** (stages 4.1-4.4 below); the keyboard
-  controller is written and verified (4.5), MuJoCo deployment (4.6) is not started.
+  GO2-PIPER teleoperation shape. **Trained, accepted and now deployed in MuJoCo** (stages 4.1-4.6
+  below); 4.6 (sim-to-sim) runs the 4.5j policy with the 4.5k filter, keyboard included.
 
 GO2-PIPER remains the reference implementation and its policy is still staged for MuJoCo (below).
 
@@ -118,13 +118,14 @@ Artifacts (each verified by loading/playing it back, not by exit code):
    were still improving slowly at iteration 2 500.
 3. Compare the trained policy against `policy_pretrained.pt` under the same `config_wbc.yaml`.
 4. Decide the fate of the six gitignored `*_base.usd` assets (see PROCESS.md §3).
-5. **Continue `rangercr10-teleop`**: the keyboard controller (task 4.5) and MuJoCo deployment
-   (4.6) are the remaining pieces of the current phase; see the entry below.
+5. **Continue `rangercr10-teleop`**: 4.6 MuJoCo deployment is done (below). The open items are
+   the policy levers named in 4.5j -- reward-side (orientation weight / position kernel width),
+   a wider `EE_OFFSET_RANGES` with retraining -- and the real-robot alignment stage after them.
 6. **`rangercr10-teleop`**: the plan is `docs/plans/teleop_plan.md`. Stages 4.1 (environment +
    six-check acceptance), 4.2 (training, 2048 envs x 1000 iterations in 105 min), 4.3 (three-mode
    acceptance) and 4.4 (decoupled-baseline control group) are done; 4.5 keyboard teleoperation
-   (`WASDQE` + `IJKLUO123456`) is done and verified (see the bug below). Still open: 4.6 MuJoCo
-   deployment.
+   (`WASDQE` + `IJKLUO123456`) is done and verified (see the bug below). 4.6 MuJoCo deployment is
+   done (entry below).
    Run `logs/rsl_rl/ranger_cr10_teleop/2026-10-12_20-14-23/`; EE position error 0.189 -> 0.081 m,
    orientation 0.649 -> 0.096 rad, linear velocity error 0.855 -> 0.074 m/s, no falls.
    Acceptance: chassis-only success 100% with the body-relative target unchanged to 0.0 while the
@@ -297,9 +298,9 @@ Artifacts (each verified by loading/playing it back, not by exit code):
    (2.26 deg vs the main run's 3.44 deg, position 25 vs 51 mm) and the best training success
    (0.866), but its **closed loop was worse** (2.1 deg / 36 mm against 1.2 deg / 24 mm) and its
    chassis yaw recovered to only 55% (main run 97%). So neither direction reaches the target
-   set at once, and `model_5999` stays the best 8-D policy. **MuJoCo (4.6) is not started**;
-   the next lever is the reward (orientation weight, position kernel width), not more training
-   or a new module.
+   set at once, and `model_5999` stays the best 8-D policy. MuJoCo (4.6) then ran on that
+   checkpoint (entry below); the next lever remains the reward (orientation weight, position
+   kernel width), not more training or a new module.
    **Stage 4.5k (2026-10-30) measured the static drift and added an optional deadband.** On the
    4.5j policy, with the external chassis command exactly zero and the arm moving for 30 s, the
    actor still commands `|vx| = 0.0117 m/s` and `|wz| = 0.0112 rad/s`; the base controller obeys
@@ -315,6 +316,33 @@ Artifacts (each verified by loading/playing it back, not by exit code):
    0.05 demonstrably eats a legitimate 0.05 m/s command (actual speed 0.0018 instead of 0.05),
    0.01 misses the 0.01 residual. Caveat for MuJoCo: the lock hands position holding to tyre
    friction, so it needs re-checking on slopes and low friction.
+   **Stage 4.6 (2026-10-31) deployed the 8-D policy in MuJoCo and the two simulators agree.**
+   There was no MJCF for this robot, so `mujoco/robots/ranger_cr10/build_mjcf.py` generates one
+   from the same converted URDF Isaac uses (every mass, inertia and joint transform parsed, not
+   retyped); actuator gains, armature and the contact groups come from the articulation config.
+   `scripts/ranger_cr10/check_mujoco_interface.py` then compares the deployment against the *live*
+   Isaac env: 117-D observation assembly `<=3.7e-10`, MuJoCo's own sampling of the same state
+   `<=2.5e-8`, TCP forward kinematics **0.002 mm / 0.0001 deg**, 256 random actions through
+   `BaseVelocityAction` vs the ported `ChassisAction` `<=6.1e-7`, deterministic actor identical.
+   Closed loop, MuJoCo vs Isaac on the same fixed commands: C2 median 2.5 s attitude
+   **1.39 deg vs 1.37 deg**, position **25.6 vs 25.9 mm**; C2b (vx 0.25 / wz 0.15 / roll +0.2)
+   vx 0.284 vs 0.280, EE 30 mm / 0.79 deg vs 31 mm / 0.72 deg; 15 s driving at 0.05 / 0.25 m/s
+   matches in speed (0.0619 vs 0.0622, 0.2873 vs 0.2891) and in distance travelled. So EE accuracy
+   does **not** degrade in MuJoCo, and the three modes work (arm-only leaves the chassis at
+   `<=0.0002 m/s`). The 4.5k filter is even more valuable here: the 30 s arm-moving static drift
+   falls 47.4 -> **0.5 mm** and the driven path 523 -> 3.9 mm, with identical low/normal/switch
+   tracking and identical EE error. Two real defects were found and fixed on the way: MuJoCo
+   writes a free joint's velocity in the **world** frame (the observation needs the body frame),
+   and the analytic cylinder wheels had **no rolling resistance** (added 4.0 Nm, derived from
+   Isaac's measured droop: low-speed speed becomes 0.0619 vs 0.0622, static drift 81 -> 47 mm;
+   `--wheel_frictionloss 0` reproduces the rigid-wheel model). **One correction to 4.5k**: its
+   drift numbers averaged `base_x/base_y` over **16 envs** whose `base_com` randomisation differs,
+   which cancelled the drift -- single-env the same script gives 13.6 mm, not 2.5 mm. The
+   conclusion (the lock removes ~2/3 or more) stands; the absolute figures were low by ~5x, and
+   drift must be reported per-environment from now on. Known residual differences: arm-driven
+   chassis creep 47 vs 13.6 mm, ride height 0.4125 vs 0.4071 m (a cylinder does not squash), and
+   no actuator delay (Isaac has 0-10 ms). Full detail: `docs/plans/teleop_plan.md` section 16.
+
 7. **New platform**: the port plan for the wheeled `rangerboxcr10lidar` (AgileX Ranger 4WS/4WD +
    Dobot CR10 + AG95) is at `docs/plans/plan.md`. **Stages 0-4 are done; stages 5-6 (MuJoCo, real-robot alignment) have not started.**
    The work lives on branch `rangercr10-world`; branch `rangercr10-teleop` (body-relative

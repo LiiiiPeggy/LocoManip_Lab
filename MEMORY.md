@@ -181,3 +181,25 @@ while teleoperating.
   10-12 deg on any command it had not memorised -- the "offline/closed-loop paradox" of stages
   4.5e-4.5f. Split by *command* (not only by episode) before believing an offline number, and
   check the command distance of the test set to the training set the same way.
+- **MuJoCo free-joint velocities are in the world frame; the policy observes the body frame
+  (2026-10-31).** Passing `qvel[0:6]` straight into `base_lin_vel` / `base_ang_vel` silently
+  rotates the observation by the robot's heading, which looks like "the policy drifts when it
+  turns" rather than like an interface bug. Verified by setting `yaw = 90 deg, qvel[0] = 1` and
+  watching the body move along world +x. Do it explicitly: `R.T @ qvel[0:3]`.
+  `mj_objectVelocity(..., flg_local=1)` returned the opposite sign of that rotation on this
+  model, so it is not used. Checked end to end by `scripts/ranger_cr10/check_mujoco_interface.py`
+  (same state into both simulators: `max|diff| = 2.5e-8` on the 117-D observation).
+- **A drift measured as the *mean* of per-env positions is not a drift (2026-10-31).**
+  `check_base_drift.py` averaged `root_pos_w` and `heading_w` over its 16 envs, and those envs
+  differ in `base_com` randomisation, so they creep in different directions and cancel: the same
+  script reports 2.5 mm per 30 s at 16 envs and **13.6 mm at `--num_envs 1`**. The stage-4.5k
+  conclusion (the zero-lock removes most of it) survived; the magnitudes were low by ~5x. Report
+  per-environment displacement (or both numbers), and prefer path length alongside net drift so
+  an oscillation cannot masquerade as "standing still".
+- **A MuJoCo cylinder wheel has no rolling resistance; an Isaac mesh tyre squashes and does
+  (2026-10-31).** In Isaac the 176 kg chassis sinks ~7 mm into the wheel contact, so a small
+  wheel-speed command produces no motion; with analytic cylinders the robot follows it, and
+  low-speed tracking reads 0.071 m/s for a 0.05 command (Isaac: 0.060). Isaac's steady-state
+  droop (5.7 Nm at 0.39 rad/s, 12.7 at 2.0) fits ~4 Nm Coulomb + ~4 Nm*s/rad viscous; adding only
+  `frictionloss=4.02` to the wheel joints brings 0.0619 vs 0.0622 and halves the arm-driven
+  drift. Keep the parameter switchable (`build_mjcf.py --wheel_frictionloss 0`).
