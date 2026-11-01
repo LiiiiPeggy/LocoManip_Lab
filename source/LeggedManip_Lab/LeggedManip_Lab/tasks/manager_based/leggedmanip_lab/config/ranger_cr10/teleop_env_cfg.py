@@ -14,6 +14,10 @@
 
 """Body-relative teleoperation WBC for the RangerBox-CR10 (branch `rangercr10-teleop`).
 
+ruff is told to skip F403/F405 here: the module deliberately re-exports the shared env config
+with a star import (that is the repository's config pattern), so `mdp` and the shared names are
+undefined from ruff's point of view.
+
 Two commands, one policy, eight actions:
 
     base_velocity_cmd = [vx_cmd, wz_cmd]        -> what the operator asks the chassis for
@@ -47,7 +51,11 @@ without either one's numbers changing. The action space, chassis controller, CR1
 and TCP definition *are* shared -- they are the parts already verified.
 """
 
+import importlib.util
+
+# ruff: noqa: F403, F405
 import math
+from pathlib import Path
 
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.utils import configclass
@@ -62,6 +70,27 @@ from LeggedManip_Lab.tasks.manager_based.leggedmanip_lab.leggedmanip_lab_env_cfg
 from ...mdp.tcp import TCP_ANCHOR_BODY
 from .wbc_env_cfg import RangerActionsCfg
 
+
+# -- the workspace: one definition, shared with the MuJoCo keyboard -------------------
+# `scripts/ranger_cr10/workspace_limits.py` holds the stage boxes, the replay ratio and the
+# keyboard clamps. It is pure Python and deliberately lives outside the extension so the
+# deployment can import it too; loading it by path here is the price of that single source.
+def _find_workspace_file() -> Path:
+    """Walk up until the repository root (the directory holding scripts/) is found."""
+    for parent in Path(__file__).resolve().parents:
+        candidate = parent / "scripts" / "ranger_cr10" / "workspace_limits.py"
+        if candidate.is_file():
+            return candidate
+    raise FileNotFoundError("scripts/ranger_cr10/workspace_limits.py not found above this file")
+
+
+_WORKSPACE_FILE = _find_workspace_file()
+_spec = importlib.util.spec_from_file_location("ranger_workspace_limits", _WORKSPACE_FILE)
+if _spec is None or _spec.loader is None:
+    raise ImportError(f"cannot load the workspace definition from {_WORKSPACE_FILE}")
+ws = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(ws)
+
 # -- end-effector target box, as offsets from the default TCP pose ------------------
 # Conservative on purpose for the first training run. The default TCP is 0.73 m from
 # base_link and the CR10 reaches about 1.3 m, but reach is not the binding constraint --
@@ -69,22 +98,12 @@ from .wbc_env_cfg import RangerActionsCfg
 # and a target the arm cannot hold would turn the orientation term into a constant
 # penalty. `check_teleop_env.py` measures the achieved error over this box so it can be
 # widened on evidence rather than optimism.
-EE_OFFSET_RANGES = dict(
-    pos_x=(-0.12, 0.12),
-    pos_y=(-0.15, 0.15),
-    pos_z=(-0.12, 0.10),
-    roll=(-0.40, 0.40),
-    pitch=(-0.40, 0.40),
-    yaw=(-0.50, 0.50),
-)
-EE_OFFSET_LIMIT_RANGES = dict(
-    pos_x=(-0.25, 0.30),
-    pos_y=(-0.35, 0.35),
-    pos_z=(-0.30, 0.30),
-    roll=(-1.00, 1.00),
-    pitch=(-0.80, 0.80),
-    yaw=(-1.00, 1.00),
-)
+# Stage 4.7: the box the policy is trained on is now *staged*. `ranges` starts at the box
+# every earlier stage used and grows on measured success (`workspace_cmd_levels`); the limit is
+# the box the reachability study supports. Both come from workspace_limits.py, as do the
+# keyboard clamps, so the two sides cannot drift apart.
+EE_OFFSET_RANGES = ws.as_ranges_kwargs(ws.STAGE_BOXES[0])
+EE_OFFSET_LIMIT_RANGES = ws.as_ranges_kwargs(ws.TARGET_BOX)
 
 
 @configclass
@@ -131,10 +150,14 @@ class RangerTeleopCommandsCfg:
         debug_vis=True,
         ranges=mdp.command_cfg.UniformTCPBodyPoseCommandCfg.Ranges(**EE_OFFSET_RANGES),
         limit_ranges=mdp.command_cfg.UniformTCPBodyPoseCommandCfg.Ranges(**EE_OFFSET_LIMIT_RANGES),
-        # left off for the first run: the box is already inside the arm's workspace, so
-        # widening it is a question about how far the arm reaches, not about whether the
-        # chassis can get there. Revisit once there is a per-stratum success rate.
-        curriculum_enabled=False,
+        # stage 4.7: grow the box stage by stage, gated on measured success (see
+        # `workspace_cmd_levels`), and keep a share of the original box in the distribution
+        replay_ranges=mdp.command_cfg.UniformTCPBodyPoseCommandCfg.Ranges(**ws.as_ranges_kwargs(ws.OLD_BOX)),
+        replay_ratio=ws.REPLAY_RATIO,
+        stage_boxes=[ws.as_ranges_kwargs(b) for b in ws.STAGE_BOXES],
+        stage_names=list(ws.STAGE_NAMES),
+        start_stage=ws.START_STAGE,
+        curriculum_enabled=True,
     )
 
 
@@ -152,10 +175,16 @@ class RangerTeleopRewardsCfg(RewardsCfg):
 
 @configclass
 class RangerTeleopCurriculumCfg:
-    """Velocity commands are the difficulty knob; the arm target box stays fixed for now."""
+    """Two difficulties: how fast the operator may ask the chassis to go, and how far the arm
+    has to reach. The arm box is promoted on the *command term's own success rate*, not on the
+    mean tracking reward -- see `workspace_cmd_levels` for why a mean is the wrong statistic."""
 
     lin_vel_cmd_levels = CurrTerm(func=mdp.lin_vel_cmd_levels)  # type: ignore
     ang_vel_cmd_levels = CurrTerm(func=mdp.ang_vel_cmd_levels)  # type: ignore
+    ee_pose_levels = CurrTerm(  # type: ignore
+        func=mdp.workspace_cmd_levels,
+        params={"promote_at": ws.PROMOTE_AT, "min_stage_steps": 2000},
+    )
 
 
 @configclass
@@ -273,9 +302,7 @@ class RangerCr10TeleopEnvCfg(LeggedManipLabEnvCfg):
 
         # -- terminations ------------------------------------------------------------
         # "base" does not exist; use the chassis body, and drop the four-legged tip-over test
-        self.terminations.base_contact.params["sensor_cfg"] = SceneEntityCfg(
-            "contact_forces", body_names="base_link"
-        )
+        self.terminations.base_contact.params["sensor_cfg"] = SceneEntityCfg("contact_forces", body_names="base_link")
 
 
 class RangerCr10TeleopEnvCfg_PLAY(RangerCr10TeleopEnvCfg):

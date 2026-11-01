@@ -36,6 +36,7 @@ MEMORY.md, "The MuJoCo viewer steals the teleop keys".
 from __future__ import annotations
 
 import argparse
+import math
 import os
 import sys
 import time
@@ -343,12 +344,28 @@ def main() -> None:
         ee_cmd = np.asarray(kb.ee_pose_command_b, dtype=np.float64)
         pos_err, ori_err = ee.errors(ee_cmd)
         lin, ang = obs_builder.base_velocity_local()
+        # which axis is pinned at its clamp -- the operator sees "U does nothing" otherwise
+        limits = []
+        for name, val, lim in (
+            ("X", pos_off[0], kb.cfg.pos_limits[0]),
+            ("Y", pos_off[1], kb.cfg.pos_limits[1]),
+            ("Z", pos_off[2], kb.cfg.pos_limits[2]),
+            ("roll", rpy_off[0], tuple(math.radians(v) for v in kb.cfg.ori_limits_deg[0])),
+            ("pitch", rpy_off[1], tuple(math.radians(v) for v in kb.cfg.ori_limits_deg[1])),
+            ("yaw", rpy_off[2], tuple(math.radians(v) for v in kb.cfg.ori_limits_deg[2])),
+        ):
+            if abs(val - lim[1]) < 1e-3:
+                limits.append(f"{name}+")
+            elif abs(val - lim[0]) < 1e-3:
+                limits.append(f"{name}-")
+        at_limit = f" | ** 已到限位: {' '.join(limits)} **" if limits else ""
         line = (
             f"t={sim_time:6.1f}s | cmd vx {vx:+.3f} wz {wz:+.3f} -> {vx_eff:+.3f} {wz_eff:+.3f} | "
             f"base v {lin[0]:+.3f} w {ang[2]:+.3f} | "
             f"EE off {pos_off[0]:+.3f} {pos_off[1]:+.3f} {pos_off[2]:+.3f} m "
             f"rpy {np.degrees(rpy_off[0]):+5.1f} {np.degrees(rpy_off[1]):+5.1f} {np.degrees(rpy_off[2]):+5.1f} deg | "
             f"err {pos_err * 1000:5.1f} mm {np.degrees(ori_err):4.2f} deg | filter {'on' if filt.enabled else 'off'}"
+            f"{at_limit}"
         )
         if sys.stdout.isatty():
             sys.stdout.write("\r" + line)

@@ -383,6 +383,174 @@ def terrain_suite(sim: Sim, out: Path, static_steps: int = 300):
     return results
 
 
+def _ws_module():
+    import importlib.util
+
+    f = ROOT / "scripts" / "ranger_cr10" / "workspace_limits.py"
+    spec = importlib.util.spec_from_file_location("ranger_workspace_limits", f)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+WS = _ws_module()
+
+
+def workspace_suite(sim: Sim, out: Path, hold: int = 30, pos_tol: float = 0.030, ori_tol_deg: float = 2.0):
+    """E1: how far along each axis does the policy hold the reference accuracy?
+
+    Single axis at a time, held for ``hold`` policy steps (3 s), error taken from the last
+    five steps. The largest offset that stays under the thresholds is the *usable* range --
+    which is the number the keyboard clamp should reflect, not the box the sampler drew from.
+    """
+    print()
+    print("=" * 108)
+    print(f"workspace suite (单轴, 每档保持 {hold} 步; 判据 位置 {pos_tol * 1000:.0f} mm / 姿态 {ori_tol_deg:.1f}°)")
+    print("=" * 108)
+    axes = {
+        "X": (0, "pos_x"),
+        "Y": (1, "pos_y"),
+        "Z": (2, "pos_z"),
+        "Roll": (0, "roll"),
+        "Pitch": (1, "pitch"),
+        "Yaw": (2, "yaw"),
+    }
+    results = []
+    print(f"  {'轴':<6}{'方向':<6}{'命令范围':>16}{'稳定跟踪到':>12}{'该点误差':>14}   首个失败点")
+    for name, (idx, key) in axes.items():
+        lo, hi = WS.KEYBOARD_BOX[key] if name in ("X", "Y", "Z") else WS.KEYBOARD_BOX[key]
+        step = 0.05 if name in ("X", "Y", "Z") else math.radians(10)
+        unit = "m" if name in ("X", "Y", "Z") else "°"
+        for sign, edge in ((1, hi), (-1, lo)):
+            stable, last_err = 0.0, (0.0, 0.0)
+            bad_at, bad_err = None, (0.0, 0.0)
+            curve = []
+            mag = step
+            while mag <= abs(edge) + 1e-9:
+                sim.reset()
+                dpos = [0.0, 0.0, 0.0]
+                drpy = [0.0, 0.0, 0.0]
+                if name in ("X", "Y", "Z"):
+                    dpos[idx] = sign * mag
+                else:
+                    drpy[idx] = sign * mag
+                sim.set_commands(0.0, 0.0, ee_command_from_offset(dpos, drpy))
+                rows = [sim.step() for _ in range(hold)]
+                pe = float(np.mean([r["ee_pos"] for r in rows[-5:]]))
+                oe = math.degrees(float(np.mean([r["ee_ori"] for r in rows[-5:]])))
+                curve.append((sign * mag, pe, oe))
+                if pe <= pos_tol and oe <= ori_tol_deg:
+                    stable = sign * mag
+                    last_err = (pe, oe)
+                elif bad_at is None:
+                    bad_at, bad_err = sign * mag, (pe, oe)
+                # the whole grid is evaluated, not stopped at the first failure: the curves are
+                # what the report compares, and a truncated curve cannot be re-thresholded
+                mag += step
+            shown = stable if name in ("X", "Y", "Z") else math.degrees(stable)
+            rng = f"{lo:.2f}..{hi:.2f}" if unit == "m" else f"{math.degrees(lo):.0f}..{math.degrees(hi):.0f}"
+            bad_txt = (
+                f"{bad_at:+.3f}{unit} -> {bad_err[0] * 1000:.0f}mm/{bad_err[1]:.2f}°"
+                if bad_at is not None
+                else "整段都在界内"
+            )
+            print(
+                f"  {name:<6}{'+' if sign > 0 else '-':<6}{rng:>14}{unit}{shown:>10.3f}{unit}"
+                f"{last_err[0] * 1000:>7.0f}mm{last_err[1]:>6.2f}°   {bad_txt}"
+            )
+            results.append(
+                dict(
+                    axis=name,
+                    sign=sign,
+                    box_lo=lo,
+                    box_hi=hi,
+                    stable=stable,
+                    err_pos=last_err[0],
+                    err_ori=last_err[1],
+                    first_bad=bad_at,
+                    first_bad_err=bad_err,
+                    curve=curve,
+                )
+            )
+    return results
+
+
+def coverage_suite(sim: Sim, out: Path, n: int = 60, hold: int = 30, seed: int = 5, box_name: str = "candidate"):
+    """E2: six-dimensional coverage -- what fraction of the new box is actually usable.
+
+    Single-axis reach does not imply the corners work: the reachability study measured 65% of
+    the candidate box solvable with IK, and the coupling between attitude and position is what
+    drops the rest. This draws whole six-dimensional targets and reports the error
+    distribution plus the joint-limit and arm-ground-contact rates.
+    """
+    import mujoco
+
+    m, d = sim.m, sim.d
+    arm_adr = [m.jnt_qposadr[mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_JOINT, f"cr10_joint{i}")] for i in range(1, 7)]
+    arm_geoms = {
+        mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_GEOM, g)
+        for g in (
+            "link1_collision",
+            "link2_collision",
+            "link3_collision",
+            "link4_collision",
+            "link5_collision",
+            "link6_collision",
+            "cr10_base_link_col",
+        )
+    }
+    limits = np.array(
+        [[-3.92, 0.94], [-1.570, 1.570], [-2.860, 2.860], [-3.140, 3.140], [-3.140, 3.140], [-3.140, 3.140]]
+    )
+    rng = np.random.default_rng(seed)
+    # ``candidate`` is the box the task brief asked for (comparable across policies and with the
+    # stage-4.6 baseline); ``keyboard`` is the smaller box the deployed keyboard actually allows,
+    # which is what an operator will use.
+    box = WS.TARGET_BOX if box_name == "candidate" else WS.KEYBOARD_BOX
+    print()
+    print("=" * 108)
+    print(f"coverage suite ({n} 个六维目标, 从 {box_name} 盒均匀抽取, 每个保持 {hold} 步)")
+    print("=" * 108)
+    rows_out, pos_e, ori_e = [], [], []
+    at_limit = 0
+    n_contact = 0
+    for _ in range(n):
+        dpos = [rng.uniform(*box[k]) for k in ("pos_x", "pos_y", "pos_z")]
+        drpy = [rng.uniform(*box[k]) for k in ("roll", "pitch", "yaw")]
+        sim.reset()
+        sim.set_commands(0.0, 0.0, ee_command_from_offset(dpos, drpy))
+        rows = [sim.step() for _ in range(hold)]
+        pe = float(np.mean([r["ee_pos"] for r in rows[-5:]]))
+        oe = math.degrees(float(np.mean([r["ee_ori"] for r in rows[-5:]])))
+        pos_e.append(pe)
+        ori_e.append(oe)
+        q = np.array([d.qpos[a] for a in arm_adr])
+        if np.any(np.abs(q - limits[:, 0]) < 0.02) or np.any(np.abs(q - limits[:, 1]) < 0.02):
+            at_limit += 1
+        if any((d.contact[c].geom1 in arm_geoms) != (d.contact[c].geom2 in arm_geoms) for c in range(d.ncon)):
+            n_contact += 1
+        rows_out.append(dict(dpos=dpos, drpy=drpy, pos_err=pe, ori_err_deg=oe))
+    pos_e = np.array(pos_e)
+    ori_e = np.array(ori_e)
+    for tag, pos_lim, ori_lim in (("30 mm / 2°", 0.030, 2.0), ("50 mm / 5°", 0.050, 5.0), ("80 mm / 10°", 0.080, 10.0)):
+        ok = (pos_e <= pos_lim) & (ori_e <= ori_lim)
+        print(f"  精度档 {tag:<12}: 成功率 {ok.mean() * 100:5.1f}%")
+    print(f"  位置误差 中位 {np.median(pos_e) * 1000:.0f} mm, p90 {np.percentile(pos_e, 90) * 1000:.0f} mm")
+    print(f"  姿态误差 中位 {np.median(ori_e):.1f}°, p90 {np.percentile(ori_e, 90):.1f}°")
+    print(f"  关节接近限位(<0.02 rad)的样本 {at_limit}/{n}; 手臂与地面/货箱接触 {n_contact}/{n}")
+    return dict(
+        rows=rows_out,
+        success={
+            t: float(((pos_e <= pos_lim) & (ori_e <= ori_lim)).mean())
+            for t, pos_lim, ori_lim in (("30mm2deg", 0.030, 2.0), ("50mm5deg", 0.050, 5.0), ("80mm10deg", 0.080, 10.0))
+        },
+        pos_median=float(np.median(pos_e)),
+        ori_median=float(np.median(ori_e)),
+        at_limit=at_limit,
+        contact=n_contact,
+    )
+
+
 def convergence_commands():
     """The 14 commands of check_teleop_stage45i.py, converted the same way."""
     cmds = [
@@ -486,7 +654,9 @@ def convergence_suite(sim: Sim, out: Path, watch: int = 25):
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--policy", default=DEFAULT_POLICY)
-    ap.add_argument("--suite", default="all", choices=["drift", "modes", "convergence", "terrain", "all"])
+    ap.add_argument(
+        "--suite", default="all", choices=["drift", "modes", "convergence", "terrain", "workspace", "coverage", "all"]
+    )
     ap.add_argument("--out", default="outputs/stage46_mujoco")
     ap.add_argument(
         "--wheel_frictionloss",
@@ -495,6 +665,12 @@ def main() -> None:
         help="override the model's wheel rolling resistance (Nm); 0 gives the rigid-cylinder model",
     )
     ap.add_argument("--tag", default=None, help="output file suffix, e.g. 'no_rolling'")
+    ap.add_argument(
+        "--coverage_box",
+        default="candidate",
+        choices=["candidate", "keyboard"],
+        help="which workspace the coverage suite draws its targets from",
+    )
     args = ap.parse_args()
 
     global RUN_TAG
@@ -514,6 +690,10 @@ def main() -> None:
         payload["convergence"] = convergence_suite(sim, out)
     if args.suite in ("terrain", "all"):
         payload["terrain"] = terrain_suite(sim, out)
+    if args.suite in ("workspace", "all"):
+        payload["workspace"] = workspace_suite(sim, out)
+    if args.suite in ("coverage", "all"):
+        payload["coverage"] = coverage_suite(sim, out, box_name=args.coverage_box)
 
     suffix = f"_{args.tag}" if args.tag else ""
     (out / f"mujoco_{args.suite}{suffix}.json").write_text(json.dumps(payload, indent=1))

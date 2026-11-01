@@ -56,11 +56,35 @@ Key map
 
 from __future__ import annotations
 
+import importlib.util
 import math
 import sys
 import threading
 import time
 from dataclasses import dataclass
+from pathlib import Path
+
+
+def _workspace_box():
+    """The shared workspace definition, loaded by path.
+
+    `scripts/ranger_cr10/workspace_limits.py` is the single source for the six limits: the
+    Isaac task's curriculum reads the same file, so the keyboard cannot drift away from what
+    the policy was trained on (stage 4.7). Falls back to ``None`` when the file is absent, and
+    the dataclass defaults below then apply.
+    """
+    for parent in Path(__file__).resolve().parents:
+        candidate = parent / "scripts" / "ranger_cr10" / "workspace_limits.py"
+        if candidate.is_file():
+            spec = importlib.util.spec_from_file_location("ranger_workspace_limits", candidate)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            return module
+    return None
+
+
+_WS = _workspace_box()
+_BOX_DEG = _WS.degrees(_WS.KEYBOARD_BOX) if _WS is not None else None
 
 # ---------------------------------------------------------------------------
 # key map
@@ -71,16 +95,22 @@ VELOCITY_KEYS = (("w", "s", "vx_max"), ("q", "e", "wz_max"))
 RESERVED_KEYS = {"a", "d"}
 
 POSITION_KEYS = {
-    "i": (+1, 0), "k": (-1, 0),   # x
-    "j": (+1, 1), "l": (-1, 1),   # y
-    "u": (+1, 2), "o": (-1, 2),   # z
+    "i": (+1, 0),
+    "k": (-1, 0),  # x
+    "j": (+1, 1),
+    "l": (-1, 1),  # y
+    "u": (+1, 2),
+    "o": (-1, 2),  # z
 }
 
 # discrete attitude steps, applied once per press: char -> (axis, sign)
 ORIENTATION_KEYS = {
-    "1": (0, -1), "2": (0, +1),   # roll
-    "3": (1, -1), "4": (1, +1),   # pitch
-    "5": (2, -1), "6": (2, +1),   # yaw
+    "1": (0, -1),
+    "2": (0, +1),  # roll
+    "3": (1, -1),
+    "4": (1, +1),  # pitch
+    "5": (2, -1),
+    "6": (2, +1),  # yaw
 }
 
 HOME_KEY = "r"
@@ -149,15 +179,20 @@ class KeyboardTeleopConfig:
     pos_rate: float = 0.10
     """m/s while a position key is held"""
 
-    pos_limits: tuple = ((-0.12, 0.12), (-0.15, 0.15), (-0.12, 0.10))
+    pos_limits: tuple = (
+        tuple(_BOX_DEG[k] for k in ("pos_x", "pos_y", "pos_z"))
+        if _BOX_DEG
+        else ((-0.12, 0.12), (-0.15, 0.15), (-0.12, 0.10))
+    )
     """per-axis offset limits, metres.
 
-    These are the trained sampling box, not the model's limit ranges. Driving the tool past
-    what the policy was trained on makes the arm lag visibly rather than fail loudly --
-    measured: at a 0.30 m offset the end-effector error climbed to 0.28 m. Widen these only
-    after widening `EE_OFFSET_RANGES` in teleop_env_cfg.py and retraining, which is the open
-    item in docs/plans/teleop_plan.md. The limits are enforced by clamping, so the operator
-    simply stops at the edge of what works.
+    These are the trained sampling box, not the model's limit ranges -- as of stage 4.7 they
+    come from `scripts/ranger_cr10/workspace_limits.py`, the same file the Isaac task's
+    curriculum reads. Driving the tool past what the policy was trained on makes the arm lag
+    visibly rather than fail loudly (measured in stage 4.5: at a 0.30 m offset the
+    end-effector error climbed to 0.28 m). The limits are enforced by clamping, so the
+    operator simply stops at the edge of what works; the status line says which axis is at
+    its edge.
     """
 
     ori_step_deg: float = 5.0
@@ -166,7 +201,11 @@ class KeyboardTeleopConfig:
     ori_home_rate_deg: float = 30.0
     """degrees/s for the walk-back to neutral, which has no held key to pace it"""
 
-    ori_limits_deg: tuple = ((-22.9, 22.9), (-22.9, 22.9), (-28.6, 28.6))
+    ori_limits_deg: tuple = (
+        tuple(_BOX_DEG[k] for k in ("roll", "pitch", "yaw"))
+        if _BOX_DEG
+        else ((-22.9, 22.9), (-22.9, 22.9), (-28.6, 28.6))
+    )
     """per-axis offset limits, degrees (low, high) -- the trained box, same reasoning as pos_limits.
 
     Signed pairs, not magnitudes. Written as ``((22.9, 22.9), ...)`` first, which read as a
@@ -201,12 +240,12 @@ class KeyboardTeleopController:
         self.default_pos = tuple(float(v) for v in default_pos)
         self.default_quat = tuple(float(v) for v in default_quat)
 
-        self._velocity = [0.0, 0.0]           # (vx, wz)
-        self._pos_offset = [0.0, 0.0, 0.0]    # metres, chassis frame
-        self._rpy_offset = [0.0, 0.0, 0.0]    # radians, chassis axes
+        self._velocity = [0.0, 0.0]  # (vx, wz)
+        self._pos_offset = [0.0, 0.0, 0.0]  # metres, chassis frame
+        self._rpy_offset = [0.0, 0.0, 0.0]  # radians, chassis axes
 
         self._pressed: set[str] = set()
-        self._consumed: set[str] = set()      # edge-trigger state for the discrete keys
+        self._consumed: set[str] = set()  # edge-trigger state for the discrete keys
         self._homing = False
         self._lock = threading.Lock()
         self.running = True
@@ -420,8 +459,7 @@ class KeyboardTeleopController:
                 "+----------- command -----------+",
                 f"| vx  {vx:+.3f} m/s   wz {wz:+.3f} rad/s |",
                 f"| pos {pos[0]:+.3f} {pos[1]:+.3f} {pos[2]:+.3f} m    |",
-                f"| rpy {math.degrees(rpy[0]):+6.1f} {math.degrees(rpy[1]):+6.1f} "
-                f"{math.degrees(rpy[2]):+6.1f} deg |",
+                f"| rpy {math.degrees(rpy[0]):+6.1f} {math.degrees(rpy[1]):+6.1f} {math.degrees(rpy[2]):+6.1f} deg |",
                 "+------------------------------+",
             ]
             sys.stdout.write("\033[2J\033[H" + "\n".join(lines) + "\n")

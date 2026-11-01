@@ -12,28 +12,28 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from isaaclab.utils import configclass
-
 from isaaclab.envs.mdp.commands import (
     UniformPoseCommandCfg as UniformPoseCommandBaseCfg,
 )
 from isaaclab.envs.mdp.commands import (
     UniformVelocityCommandCfg as UniformVelocityCommandBaseCfg,
 )
-from ..pose_command_wbc import UniformPoseWBCCommand
+from isaaclab.utils import configclass
+
 from ..pose_command_b import UniformBodyPoseCommand
-from ..pose_command_world import UniformPoseWorldCommand
 from ..pose_command_teleop import (
     TCP_DEFAULT_POS_B,
     TCP_DEFAULT_QUAT_B,
     UniformTCPBodyPoseCommand,
 )
+from ..pose_command_wbc import UniformPoseWBCCommand
+from ..pose_command_world import UniformPoseWorldCommand
+
 
 # -- pose
 @configclass
 class UniformPoseCommandCfg(UniformPoseCommandBaseCfg):
-
-    class_type: type  = UniformBodyPoseCommand
+    class_type: type = UniformBodyPoseCommand
 
     ranges: UniformPoseCommandBaseCfg.Ranges = None  # type: ignore
     """The initial range"""
@@ -41,6 +41,7 @@ class UniformPoseCommandCfg(UniformPoseCommandBaseCfg):
     """The range limit """
     curriculum_enabled: bool = False
     root_name: str = "link0"
+
 
 @configclass
 class UniformTCPBodyPoseCommandCfg(UniformPoseCommandCfg):
@@ -62,6 +63,25 @@ class UniformTCPBodyPoseCommandCfg(UniformPoseCommandCfg):
     default_quat_b: tuple[float, float, float, float] = TCP_DEFAULT_QUAT_B
     """TCP attitude relative to ``root_name`` at the arm's authored default pose, ``(w, x, y, z)``."""
 
+    replay_ranges: object = None
+    """Optional second box; a resample draws from it with probability ``replay_ratio``.
+
+    Used by the stage 4.7 workspace curriculum to keep a fraction of the original box in the
+    distribution, so the accuracy the earlier stages paid for does not decay as the box grows.
+    """
+
+    replay_ratio: float = 0.0
+
+    stage_boxes: object = None
+    """``list[dict]`` of the curriculum stages, in order; see ``scripts/ranger_cr10/workspace_limits.py``."""
+
+    stage_names: object = None
+    """Labels for the stages, used in the curriculum's log line."""
+
+    start_stage: int = 0
+    """Stage to begin at. Non-zero only when resuming a run whose curriculum already advanced
+    (the 4.7 run restarted at stage 1 after the promotion gate was made stable)."""
+
     success_threshold: float = 0.10
     """Position error below which a command counts as reached. Tighter than the world
     task's 0.15 m because a chassis-relative target is always inside the arm's own
@@ -70,8 +90,7 @@ class UniformTCPBodyPoseCommandCfg(UniformPoseCommandCfg):
 
 @configclass
 class UniformPoseWBCCommandCfg(UniformPoseCommandBaseCfg):
-
-    class_type: type  = UniformPoseWBCCommand
+    class_type: type = UniformPoseWBCCommand
 
     ranges: UniformPoseCommandBaseCfg.Ranges = None  # type: ignore
     """The initial range"""

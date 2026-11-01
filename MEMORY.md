@@ -211,3 +211,11 @@ change without the guard, 0.0% with it.
   droop (5.7 Nm at 0.39 rad/s, 12.7 at 2.0) fits ~4 Nm Coulomb + ~4 Nm*s/rad viscous; adding only
   `frictionloss=4.02` to the wheel joints brings 0.0619 vs 0.0622 and halves the arm-driven
   drift. Keep the parameter switchable (`build_mjcf.py --wheel_frictionloss 0`).
+- **"Success rate" is two different statistics and a curriculum must say which (2026-11-01).**
+  `UniformTCPBodyPoseCommand` keeps `metrics["success"]` (the instantaneous fraction of
+  environments on target, which `Metrics/ee_pose/success` logs) *and* `success_rate` (the running
+  average since each environment's last resample). The second is dragged down ~0.10 by the 1-2 s
+  transient after every command change: measured on the same training run, 0.824 instantaneous
+  against 0.722 running. A stage gate reading the running average never promoted; the same gate
+  reading the instantaneous value (with a 0.95 EMA, because that fraction fluctuates +-0.04 per
+  sample) moves. Name the statistic *and* the smoothing before trusting a curriculum threshold.

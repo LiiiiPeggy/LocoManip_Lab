@@ -111,6 +111,37 @@ class UniformTCPBodyPoseCommand(UniformBodyPoseCommand):
         self.metrics["success"] = torch.zeros(self.num_envs, device=self.device)
         self._success_sum = torch.zeros(self.num_envs, device=self.device)
         self._success_count = torch.zeros(self.num_envs, device=self.device)
+        # workspace curriculum state (stage 4.7); 0 is the box this task has always used
+        self.success_ema = None
+        self.stage_entered_step = 0
+        self.stage_index = int(getattr(cfg, "start_stage", 0))
+        if self.stage_index and cfg.stage_boxes:
+            for axis, values in cfg.stage_boxes[self.stage_index].items():
+                setattr(self.cfg.ranges, axis, tuple(values))
+
+    def set_stage(self, index: int, box) -> None:
+        """Apply a curriculum stage and resample every environment immediately.
+
+        Written as a method on the term rather than as a direct write to ``cfg.ranges`` so the
+        environments are not left holding targets from the previous box for up to a whole
+        resampling interval -- that would blur exactly the boundary the curriculum is moving.
+        """
+        self.stage_index = int(index)
+        self.stage_entered_step = int(self._env.common_step_counter)
+        for axis, values in box.items():
+            setattr(self.cfg.ranges, axis, tuple(values))
+        ids = torch.arange(self.num_envs, device=self.device)
+        self._resample_command(ids)
+
+    @property
+    def instant_success(self) -> torch.Tensor:
+        """Fraction of environments within the threshold *right now*.
+
+        This is the quantity the episode log prints as ``Metrics/ee_pose/success``;
+        :attr:`success_rate` is a running average since each environment's last resample and
+        is therefore dragged down by the transient after every command change.
+        """
+        return self.metrics["success"]
 
     @property
     def success_rate(self) -> torch.Tensor:
@@ -128,20 +159,26 @@ class UniformTCPBodyPoseCommand(UniformBodyPoseCommand):
         default_pos = torch.tensor(self.cfg.default_pos_b, device=self.device).expand(n, 3)
         default_quat = torch.tensor(self.cfg.default_quat_b, device=self.device).expand(n, 4)
 
-        # -- position: an offset from the default, in the chassis frame ---------------
-        offset_pos = _uniform_axes(
-            n,
-            (self.cfg.ranges.pos_x, self.cfg.ranges.pos_y, self.cfg.ranges.pos_z),
-            self.device,
-        )
-        self.pose_command_b[env_ids, :3] = default_pos + offset_pos
+        # -- which box does this sample come from? ----------------------------------
+        # The curriculum grows `ranges` stage by stage; a fraction of every resample is drawn
+        # from the original box instead (stage 4.7), so growing the workspace cannot trade
+        # away the accuracy the earlier stages paid for. Both draws use `_uniform_axes`, so
+        # the six axes stay independent inside either box.
+        rng = self.cfg.ranges
+        if self.cfg.replay_ranges is not None and self.cfg.replay_ratio > 0.0:
+            replay = torch.rand(n, device=self.device) < self.cfg.replay_ratio
+        else:
+            replay = torch.zeros(n, dtype=torch.bool, device=self.device)
 
-        # -- orientation: an offset about the chassis axes, pre-multiplied ------------
-        euler = _uniform_axes(
-            n,
-            (self.cfg.ranges.roll, self.cfg.ranges.pitch, self.cfg.ranges.yaw),
-            self.device,
-        )
+        offset_pos = _uniform_axes(n, (rng.pos_x, rng.pos_y, rng.pos_z), self.device)
+        euler = _uniform_axes(n, (rng.roll, rng.pitch, rng.yaw), self.device)
+        if replay.any():
+            rr = self.cfg.replay_ranges
+            k = int(replay.sum())
+            offset_pos[replay] = _uniform_axes(k, (rr.pos_x, rr.pos_y, rr.pos_z), self.device)
+            euler[replay] = _uniform_axes(k, (rr.roll, rr.pitch, rr.yaw), self.device)
+
+        self.pose_command_b[env_ids, :3] = default_pos + offset_pos
         offset_quat = quat_from_euler_xyz(euler[:, 0], euler[:, 1], euler[:, 2])
         self.pose_command_b[env_ids, 3:] = quat_mul(offset_quat, default_quat)
 

@@ -359,6 +359,34 @@ Artifacts (each verified by loading/playing it back, not by exit code):
    to the launching window (and re-checks 4x/s), with `ViewerKeyPin` as a backstop. Measured on
    the picture itself: 38.0% of pixels changed without the guard, 0.0% with it.
 
+   **Stage 4.7 (2026-11-01) expanded the end-effector workspace and rebuilt the keyboard limits
+   around measurement.** Task A first: `check_workspace_reach.py` sweeps the six axes by moving
+   1 cm / 2 deg at a time from the default pose (a multi-restart IK answers "does any
+   configuration reach this" and is reported alongside, because the two disagree badly -- `Y+0.20`
+   only exists in a branch with joint1 at -3.4 rad). Measured: X -0.05..+0.45, Y -0.45..+0.07,
+   Z -0.26..+0.45 at the default attitude; roll -18..+70, pitch **-14**..+70, yaw +-70 deg. So
+   the old +X weakness was never a reach problem (the arm goes 0.45 m forward while the old
+   policy was 39 mm off at 0.05), while part of the old box (X-0.12 at the default attitude) was
+   already outside the continuously reachable set; pitch -45 deg is genuinely unavailable, so the
+   target box ships with pitch capped at -30 deg. 66-68% of the candidate box is reachable by
+   multi-restart IK, 0% of reachable targets put the arm into the ground.
+   The training box now lives in `scripts/ranger_cr10/workspace_limits.py` -- one file read by
+   both the Isaac task and the MuJoCo keyboard -- and grows in four stages promoted by the
+   command's own success rate (threshold 0.85, at least 2000 steps per stage, 30% of samples
+   replayed from the old box). 6000 PPO iterations ran in three segments (2000 + 1000 + 3000);
+   the gate had to be fixed twice on evidence (a single-sample comparison on a statistic that
+   fluctuates +-0.04, then reading `success_rate`, which is a running average since the last
+   resample and sits 0.10 below the instantaneous fraction). **The curriculum still stopped at
+   stage 1**: success EMA plateaued at 0.84 against the 0.85 needed, so stages 2-3 never ran.
+   Result on a fixed 60-target set from the *new* box: median position error 142 -> **61 mm**,
+   orientation 10.1 -> **4.0 deg**, 80 mm/10 deg coverage 8.3 -> **66.7%** (30 mm/2 deg 0 -> 8.3%).
+   On the *old* commands nothing degraded: 2.5 s convergence 0.79 deg / 23.4 mm (was 1.37 / 25.9),
+   three-mode EE attitude improved across the board, chassis linear/yaw error 0.159/0.145 against
+   4.5j's 0.154/0.138, static drift with the lock still 0.5 mm. The keyboard box is now the
+   *measured* usable range rather than the training box (X -0.10..+0.25, Y -0.35..+0.10,
+   Z -0.20..+0.25, roll -30..+40 deg, pitch -20..+40 deg, yaw +-60 deg), it is asymmetric because
+   the arm is, and the status line names the axis that hit its clamp.
+
 7. **New platform**: the port plan for the wheeled `rangerboxcr10lidar` (AgileX Ranger 4WS/4WD +
    Dobot CR10 + AG95) is at `docs/plans/plan.md`. **Stages 0-4 are done; stages 5-6 (MuJoCo, real-robot alignment) have not started.**
    The work lives on branch `rangercr10-world`; branch `rangercr10-teleop` (body-relative

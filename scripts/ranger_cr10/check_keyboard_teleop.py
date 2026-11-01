@@ -40,11 +40,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "mujoco/deploy/deploy_mujoco/ranger_cr10"))
 
-from keyboard_teleop import (  # noqa: E402
+from keyboard_teleop import (
     KeyboardTeleopConfig,
     KeyboardTeleopController,
     quat_from_euler_xyz,
     quat_mul,
+)
+from keyboard_teleop import (  # noqa: E402
+    _workspace_box as _load_workspace,
 )
 
 # the tool's pose at the arm's default configuration, from pose_command_teleop.py
@@ -104,7 +107,7 @@ c = make()
 hold(c, "w", 0.6)
 vx_before, _ = c.velocity_command
 pos_before, _ = c.pose_offset
-hold(c, "wi", 0.4)          # arm key joins while the chassis key stays held
+hold(c, "wi", 0.4)  # arm key joins while the chassis key stays held
 vx_after, _ = c.velocity_command
 pos_after, _ = c.pose_offset
 check("速度继续按自己的斜坡走", vx_after > vx_before, f"{vx_before:+.3f} -> {vx_after:+.3f}")
@@ -129,8 +132,7 @@ pos_held, rpy_held = c.pose_offset
 c.release("i")
 hold(c, "", 1.0)
 pos_after, rpy_after = c.pose_offset
-check("目标一字未动", pos_after == pos_held and rpy_after == rpy_held,
-      f"x {pos_held[0]:+.4f} -> {pos_after[0]:+.4f}")
+check("目标一字未动", pos_after == pos_held and rpy_after == rpy_held, f"x {pos_held[0]:+.4f} -> {pos_after[0]:+.4f}")
 
 # -- 6 ---------------------------------------------------------------------
 print("\n6. 重置: 速度立即归零, 目标按斜坡走回, 不跳变")
@@ -153,18 +155,23 @@ d_pos = math.dist(pos_1, pos_before)
 d_ori = max(abs(rpy_1[k] - rpy_before[k]) for k in range(3))
 cfg = c.cfg
 check("速度在一步内归零", vx_now == 0.0 and wz_now == 0.0, f"{vx_before:+.3f} -> {vx_now:+.4f}")
-check("位置每步位移 <= pos_rate*dt", d_pos <= cfg.pos_rate * DT + 1e-9,
-      f"{d_pos:.5f} m <= {cfg.pos_rate * DT:.5f} m")
-check("姿态每步位移 <= ori_home_rate*dt", d_ori <= math.radians(cfg.ori_home_rate_deg) * DT + 1e-9,
-      f"{math.degrees(d_ori):.2f}deg <= {cfg.ori_home_rate_deg * DT:.2f}deg")
+check("位置每步位移 <= pos_rate*dt", d_pos <= cfg.pos_rate * DT + 1e-9, f"{d_pos:.5f} m <= {cfg.pos_rate * DT:.5f} m")
+check(
+    "姿态每步位移 <= ori_home_rate*dt",
+    d_ori <= math.radians(cfg.ori_home_rate_deg) * DT + 1e-9,
+    f"{math.degrees(d_ori):.2f}deg <= {cfg.ori_home_rate_deg * DT:.2f}deg",
+)
 c.release("r")
 steps = 0
 while steps < 400 and any(abs(v) > 1e-6 for v in c.pose_offset[0] + c.pose_offset[1]):
     c.update(DT)
     steps += 1
 pos_end, rpy_end = c.pose_offset
-check("最终走回中性", all(abs(v) < 1e-6 for v in pos_end + rpy_end),
-      f"{steps * DT:.1f} s 后 pos={tuple(round(v, 6) for v in pos_end)} rpy={tuple(round(v, 6) for v in rpy_end)}")
+check(
+    "最终走回中性",
+    all(abs(v) < 1e-6 for v in pos_end + rpy_end),
+    f"{steps * DT:.1f} s 后 pos={tuple(round(v, 6) for v in pos_end)} rpy={tuple(round(v, 6) for v in rpy_end)}",
+)
 
 print("\n6b. 归位途中按住末端键 = 取消归位(有意的), 但要能解释清楚")
 c = make()
@@ -175,14 +182,17 @@ pos_held, _ = c.pose_offset
 c.press("r")
 hold(c, "r", 0.5)
 pos_homing, _ = c.pose_offset
-c.press("i")                      # grab the arm while it is walking home
+c.press("i")  # grab the arm while it is walking home
 hold(c, "ri", 0.5)
 pos_cancel, _ = c.pose_offset
 c.release("r")
 c.release("i")
 check("按 R 后目标开始回落", pos_homing[0] < pos_held[0], f"x {pos_held[0]:+.4f} -> {pos_homing[0]:+.4f}")
-check("按住末端键后归位停止并重新接手", pos_cancel[0] > pos_homing[0],
-      f"x {pos_homing[0]:+.4f} -> {pos_cancel[0]:+.4f} (不再回落)")
+check(
+    "按住末端键后归位停止并重新接手",
+    pos_cancel[0] > pos_homing[0],
+    f"x {pos_homing[0]:+.4f} -> {pos_cancel[0]:+.4f} (不再回落)",
+)
 
 # -- 7 ---------------------------------------------------------------------
 print("\n7. A / D 是保留键, 不应有任何效果")
@@ -201,10 +211,12 @@ hold(c, "q", 10.0)
 vx, wz = c.velocity_command
 hold(c, "i", 20.0)
 pos, _ = c.pose_offset
-check("速度上限 = 配置值", abs(vx - c.cfg.vx_max) < 1e-9 and abs(wz - c.cfg.wz_max) < 1e-9,
-      f"vx={vx:+.3f}/{c.cfg.vx_max} wz={wz:+.3f}/{c.cfg.wz_max}")
-check("位置上限 = 配置值", abs(pos[0] - c.cfg.pos_limits[0][1]) < 1e-9,
-      f"x={pos[0]:+.4f}/{c.cfg.pos_limits[0][1]}")
+check(
+    "速度上限 = 配置值",
+    abs(vx - c.cfg.vx_max) < 1e-9 and abs(wz - c.cfg.wz_max) < 1e-9,
+    f"vx={vx:+.3f}/{c.cfg.vx_max} wz={wz:+.3f}/{c.cfg.wz_max}",
+)
+check("位置上限 = 配置值", abs(pos[0] - c.cfg.pos_limits[0][1]) < 1e-9, f"x={pos[0]:+.4f}/{c.cfg.pos_limits[0][1]}")
 
 
 def tap(ctrl: KeyboardTeleopController, ch: str) -> None:
@@ -219,53 +231,72 @@ def tap(ctrl: KeyboardTeleopController, ch: str) -> None:
 # (low, high), so low == high == +22.9 deg and the *first* press of any attitude key snapped
 # to the positive limit -- including the minus keys. The position limits were always signed,
 # which is why the checks above passed. Test the step size and both signs, not just "clamps".
-print("\n8b. 姿态键: 单次按键一个 ori_step, 限位正负对称")
-# the trained sampling box, from teleop_env_cfg.EE_OFFSET_RANGES (roll/pitch +-0.40 rad, yaw
-# +-0.50 rad); the controller states them in degrees, rounded to 0.1 deg
-BOX_RP, BOX_YAW = math.degrees(0.40), math.degrees(0.50)
+print("\n8b. 姿态键: 单次按键一个 ori_step, 限位等于共享工作空间定义")
+# Since stage 4.7 the box is not symmetric: the reachability study found the tool cannot roll
+# or pitch much past -15 deg from the default posture while it reaches +45 deg easily, so
+# `workspace_limits.KEYBOARD_BOX` caps pitch at -30 deg. The requirement is therefore
+# "equals the shared definition", not "is symmetric" -- the old symmetry check is what would
+# now fail, correctly, if someone re-introduced a symmetric default by hand.
+_ws = _load_workspace()
+_ref = _ws.degrees(_ws.KEYBOARD_BOX) if _ws is not None else None
 MAX_RP = make().cfg.ori_limits_deg[0][1]
 MAX_YAW = make().cfg.ori_limits_deg[2][1]
-for axis, name, box in ((0, "roll", BOX_RP), (1, "pitch", BOX_RP), (2, "yaw", BOX_YAW)):
+for axis, name, key in ((0, "roll", "roll"), (1, "pitch", "pitch"), (2, "yaw", "yaw")):
     lo, hi = make().cfg.ori_limits_deg[axis]
-    check(f"{name} 限位 ≈ 训练采样盒 ±{box:.1f}deg 且正负对称",
-          abs(hi - box) < 0.05 and abs(lo + box) < 0.05, f"[{lo:+.1f}, {hi:+.1f}]deg")
+    if _ref is not None:
+        rlo, rhi = _ref[key]
+        check(
+            f"{name} 限位 = workspace_limits.KEYBOARD_BOX",
+            abs(hi - rhi) < 1e-6 and abs(lo - rlo) < 1e-6,
+            f"[{lo:+.1f}, {hi:+.1f}]deg vs [{rlo:+.1f}, {rhi:+.1f}]",
+        )
+    for v, edge in ((hi, "正"), (lo, "负")):
+        pass
 c = make()
 tap(c, "2")
 _, rpy = c.pose_offset
-check("roll 单次 + = ori_step", abs(math.degrees(rpy[0]) - c.cfg.ori_step_deg) < 1e-9,
-      f"{math.degrees(rpy[0]):+.2f}deg vs {c.cfg.ori_step_deg:.2f}deg")
+check(
+    "roll 单次 + = ori_step",
+    abs(math.degrees(rpy[0]) - c.cfg.ori_step_deg) < 1e-9,
+    f"{math.degrees(rpy[0]):+.2f}deg vs {c.cfg.ori_step_deg:.2f}deg",
+)
 c = make()
 tap(c, "1")
 _, rpy = c.pose_offset
-check("roll 单次 - = -ori_step", abs(math.degrees(rpy[0]) + c.cfg.ori_step_deg) < 1e-9,
-      f"{math.degrees(rpy[0]):+.2f}deg")
+check(
+    "roll 单次 - = -ori_step", abs(math.degrees(rpy[0]) + c.cfg.ori_step_deg) < 1e-9, f"{math.degrees(rpy[0]):+.2f}deg"
+)
 
 c = make()
 for _ in range(20):
     tap(c, "2")
 _, rpy = c.pose_offset
-check("roll 正限位 = +22.9deg", abs(math.degrees(rpy[0]) - MAX_RP) < 1e-6, f"{math.degrees(rpy[0]):+.2f}deg")
+check(f"roll 正限位 = +{MAX_RP:.1f}deg", abs(math.degrees(rpy[0]) - MAX_RP) < 1e-6, f"{math.degrees(rpy[0]):+.2f}deg")
 c = make()
 for _ in range(20):
     tap(c, "1")
 _, rpy = c.pose_offset
-check("roll 负限位 = -22.9deg", abs(math.degrees(rpy[0]) + MAX_RP) < 1e-6, f"{math.degrees(rpy[0]):+.2f}deg")
+_ROLL_LO = make().cfg.ori_limits_deg[0][0]
+check(
+    f"roll 负限位 = {_ROLL_LO:.1f}deg", abs(math.degrees(rpy[0]) - _ROLL_LO) < 1e-6, f"{math.degrees(rpy[0]):+.2f}deg"
+)
 
 c = make()
 for _ in range(20):
     tap(c, "4")
 _, rpy = c.pose_offset
-check("pitch 正限位 = +22.9deg", abs(math.degrees(rpy[1]) - MAX_RP) < 1e-6, f"{math.degrees(rpy[1]):+.2f}deg")
+check(f"pitch 正限位 = +{MAX_RP:.1f}deg", abs(math.degrees(rpy[1]) - MAX_RP) < 1e-6, f"{math.degrees(rpy[1]):+.2f}deg")
 c = make()
 for _ in range(20):
     tap(c, "6")
 _, rpy = c.pose_offset
-check("yaw 正限位 = +28.6deg", abs(math.degrees(rpy[2]) - MAX_YAW) < 1e-6, f"{math.degrees(rpy[2]):+.2f}deg")
+check(f"yaw 正限位 = +{MAX_YAW:.1f}deg", abs(math.degrees(rpy[2]) - MAX_YAW) < 1e-6, f"{math.degrees(rpy[2]):+.2f}deg")
 c = make()
 for _ in range(20):
     tap(c, "5")
 _, rpy = c.pose_offset
-check("yaw 负限位 = -28.6deg", abs(math.degrees(rpy[2]) + MAX_YAW) < 1e-6, f"{math.degrees(rpy[2]):+.2f}deg")
+_YAW_LO = make().cfg.ori_limits_deg[2][0]
+check(f"yaw 负限位 = {_YAW_LO:.1f}deg", abs(math.degrees(rpy[2]) - _YAW_LO) < 1e-6, f"{math.degrees(rpy[2]):+.2f}deg")
 
 c = make()
 for _ in range(20):
@@ -273,21 +304,26 @@ for _ in range(20):
     tap(c, "4")
     tap(c, "6")
 _, rpy = c.pose_offset
-check("三轴独立 (roll/pitch/yaw 同时到限位)",
-      abs(math.degrees(rpy[0]) - MAX_RP) < 1e-6 and abs(math.degrees(rpy[1]) - MAX_RP) < 1e-6
-      and abs(math.degrees(rpy[2]) - MAX_YAW) < 1e-6,
-      f"({math.degrees(rpy[0]):+.1f}, {math.degrees(rpy[1]):+.1f}, {math.degrees(rpy[2]):+.1f})deg")
+check(
+    "三轴独立 (roll/pitch/yaw 同时到限位)",
+    abs(math.degrees(rpy[0]) - MAX_RP) < 1e-6
+    and abs(math.degrees(rpy[1]) - MAX_RP) < 1e-6
+    and abs(math.degrees(rpy[2]) - MAX_YAW) < 1e-6,
+    f"({math.degrees(rpy[0]):+.1f}, {math.degrees(rpy[1]):+.1f}, {math.degrees(rpy[2]):+.1f})deg",
+)
 
 # -- 9 ---------------------------------------------------------------------
 print("\n9. 四元数工具函数自检 (与 Isaac Lab 版本在集成脚本里逐值对比)")
 q = quat_from_euler_xyz(math.pi / 2, 0.0, 0.0)  # 90 deg roll
 expect = (math.sqrt(0.5), math.sqrt(0.5), 0.0, 0.0)
-check("roll 90deg", all(abs(q[i] - expect[i]) < 1e-12 for i in range(4)),
-      f"{tuple(round(v, 6) for v in q)}")
+check("roll 90deg", all(abs(q[i] - expect[i]) < 1e-12 for i in range(4)), f"{tuple(round(v, 6) for v in q)}")
 identity = (1.0, 0.0, 0.0, 0.0)
 check("单位元乘法", quat_mul(q, identity) == q, f"{tuple(round(v, 6) for v in quat_mul(q, identity))}")
-check("逆序抵消", all(abs(v - identity[i]) < 1e-12 for i, v in enumerate(
-    quat_mul(q, (q[0], -q[1], -q[2], -q[3])))), "q * q^-1 = identity")
+check(
+    "逆序抵消",
+    all(abs(v - identity[i]) < 1e-12 for i, v in enumerate(quat_mul(q, (q[0], -q[1], -q[2], -q[3])))),
+    "q * q^-1 = identity",
+)
 
 failed = [n for n, ok, _ in results if not ok]
 print(f"\n===== {len(results) - len(failed)}/{len(results)} 通过 =====")
