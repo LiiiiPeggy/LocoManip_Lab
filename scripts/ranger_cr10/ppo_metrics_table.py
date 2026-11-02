@@ -67,6 +67,8 @@ WANT = {
     "Metrics/ee_pose/success": "success",
     "Metrics/base_velocity/error_vel_xy": "lin_err",
     "Metrics/base_velocity/error_vel_yaw": "yaw_err",
+    # stage 4.8: the curriculum step, so a promotion is visible in the same table as the losses
+    "Curriculum/ee_pose_levels": "stage",
     "Episode_Termination/base_contact": "term_contact",
     "Episode_Termination/bad_orientation": "term_ori",
     "Episode_Termination/time_out": "term_timeout",
@@ -99,6 +101,7 @@ def at(key, it):
 
 
 ORDER = [
+    "stage",
     "surrogate",
     "value",
     "entropy",
@@ -117,12 +120,13 @@ ORDER = [
 ]
 
 hdr = (
-    f"{'iter':>6}{'surrogate':>11}{'value':>10}{'entropy':>10}{'lr':>10}{'std':>7}"
+    f"{'iter':>6}{'stage':>6}{'surrogate':>11}{'value':>10}{'entropy':>10}{'lr':>10}{'std':>7}"
     f"{'reward':>9}{'ep_len':>8}{'EE pos':>9}{'EE ori':>8}{'succ':>7}{'lin err':>9}{'yaw err':>9}"
 )
 print(hdr)
 print("-" * len(hdr))
 FMT = {
+    "stage": ".0f",
     "surrogate": ".4f",
     "value": ".4f",
     "entropy": ".4f",
@@ -140,6 +144,7 @@ FMT = {
     "term_timeout": ".3f",
 }
 WIDTH = {
+    "stage": 6,
     "surrogate": 11,
     "value": 10,
     "entropy": 10,
@@ -159,6 +164,7 @@ for it in marks:
     rows.append({"iter": it, **vals})
     line = f"{it:>6}"
     for k in (
+        "stage",
         "surrogate",
         "value",
         "entropy",

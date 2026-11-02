@@ -219,3 +219,21 @@ change without the guard, 0.0% with it.
   against 0.722 running. A stage gate reading the running average never promoted; the same gate
   reading the instantaneous value (with a 0.95 EMA, because that fraction fluctuates +-0.04 per
   sample) moves. Name the statistic *and* the smoothing before trusting a curriculum threshold.
+- **A curriculum gated on *unfiltered* success has a ceiling equal to the reachable share
+  (2026-11-02).** Stage 4.7's workspace curriculum stalled at success EMA 0.838 against a 0.85
+  gate and never reached its last two boxes; the deeper reason is that a target the arm cannot
+  physically hold fails forever, so no policy can exceed the fraction of the sampled box that is
+  kinematically solvable (measured 84.2% for the 4.8 candidate box, 68.3% for 4.7's). Stage 4.8
+  therefore counts success over a reachability-filtered subset and logs the *unfiltered* rate and
+  the reachable share on the same line, so the filter can never quietly manufacture a promotion.
+  Corollary: measure the filter's error in *both* directions -- the 4.8 table's dangerous
+  direction (says reachable, IK cannot solve) is 3.0%, its conservative direction 25.5%, and only
+  the first one corrupts the curriculum.
+- **"Continuous reachability from the default posture" is the wrong test for *attitudes*
+  (2026-11-02).** The stage-4.7 sweep walked each axis from `DEFAULT_Q` and reported
+  `roll=-45` / `pitch=-30` as 0 everywhere, yet the policy demonstrably holds roll -30 deg in
+  teleoperation -- because a policy may move the tool away first and rotate second. The reach
+  table that trains the 4.8 curriculum therefore seeds each attitude cell with *any* solvable
+  configuration (default position first, then the six axis extremes) and only then walks
+  position. Use the from-default sweep for "what a single keystroke can reach"; use the seeded
+  walk for "what the arm can hold at all".

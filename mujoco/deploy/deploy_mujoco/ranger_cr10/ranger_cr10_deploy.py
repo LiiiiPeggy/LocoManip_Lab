@@ -286,6 +286,7 @@ def main() -> None:
             wz_max=kcfg["wz_max"],
             vel_rate=kcfg["vel_rate"],
             vel_return_rate=kcfg["vel_return_rate"],
+            profile=kcfg.get("profile", "4.8"),
         ),
     )
 
@@ -294,6 +295,15 @@ def main() -> None:
     print(
         f"filter  {'on' if filt.enabled else 'off'}  vx_deadband={filt.vx_deadband} wz_deadband={filt.wz_deadband} "
         f"lock={filt.lock_output}"
+    )
+    print(
+        f"workspace profile {kb.cfg.profile}: "
+        f"X {kb.cfg.pos_limits[0][0]:+.2f}..{kb.cfg.pos_limits[0][1]:+.2f}  "
+        f"Y {kb.cfg.pos_limits[1][0]:+.2f}..{kb.cfg.pos_limits[1][1]:+.2f}  "
+        f"Z {kb.cfg.pos_limits[2][0]:+.2f}..{kb.cfg.pos_limits[2][1]:+.2f} m | "
+        f"roll {kb.cfg.ori_limits_deg[0][0]:+.0f}..{kb.cfg.ori_limits_deg[0][1]:+.0f}  "
+        f"pitch {kb.cfg.ori_limits_deg[1][0]:+.0f}..{kb.cfg.ori_limits_deg[1][1]:+.0f}  "
+        f"yaw {kb.cfg.ori_limits_deg[2][0]:+.0f}..{kb.cfg.ori_limits_deg[2][1]:+.0f} deg"
     )
     print("keep this terminal focused: the MuJoCo viewer also listens to letters\n")
 

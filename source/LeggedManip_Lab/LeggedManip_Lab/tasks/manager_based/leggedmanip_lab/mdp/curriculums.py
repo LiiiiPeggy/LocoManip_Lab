@@ -247,22 +247,37 @@ def workspace_cmd_levels(
     command_name: str = "ee_pose",
     promote_at: float = 0.75,
     min_stage_steps: int = 0,
+    window_steps: int = 2000,
+    promote_windows: int = 3,
+    force_after_steps: int = 0,
+    force_floor: float = 0.70,
 ) -> torch.Tensor:
-    """Stage the end-effector box up on measured success (stage 4.7).
+    """Stage the end-effector box up on measured success (stage 4.7, revised in 4.8).
 
     The stages are explicit boxes (``cfg.stage_boxes``), not a per-episode nudge of every
     limit: the reachability study found the useful space is not a scaled copy of the old box
     (the arm reaches +0.45 m forward but 0.05 m backward from a continuous start), so scaling
     all six limits together would spend most of the new volume on targets the arm cannot hold.
 
-    Promotion is gated on the command term's own ``success_rate`` -- the fraction of steps
-    since the last resample that were within ``success_threshold`` -- averaged over the
-    environments. That is the same measurement the acceptance test reports, and unlike the
-    reward mean it cannot be held up by the easy half of the box. Iteration count is *not*
-    part of the test; a stage that never gets solved simply never promotes, which is the
-    failure mode the report has to show rather than hide behind a schedule.
+    What the 4.8 revision changes, and why:
 
-    ``min_stage_steps`` optionally forbids promoting within that many steps of the last
+    * **the statistic is filtered.** A target the arm cannot physically hold can never be
+      reached, so counting it against the policy caps the success rate at the reachable share
+      of the box. On the 4.8 box that share is well under the promotion threshold, which is
+      how a curriculum stops at stage 1 forever. The gate now reads success over *reachable*
+      targets only; the unfiltered rate and the reachable share are printed on every window
+      so the exclusion is visible rather than silently helpful.
+    * **the threshold is 0.80, not 0.85.** 4.7's run sat at an EMA of 0.838 for 3000
+      iterations against a 0.85 gate. 0.80 is still a demand that the policy solve four fifths
+      of the box at once.
+    * **promotion needs consecutive windows**, not one sample: ``promote_windows`` successive
+      evaluations (``window_steps`` policy steps apart) all above the threshold. One lucky
+      window is not a measurement.
+    * **a stage cannot sit forever.** If a stage has run ``force_after_steps`` and is above
+      ``force_floor``, it advances anyway and prints that it was forced. This is a schedule
+      escape hatch, not a success claim, and it is logged as such.
+
+    ``min_stage_steps`` additionally forbids promoting within that many steps of the last
     promotion, so a box that is solved trivially cannot run through all stages in a few
     episodes before the policy has actually seen it.
     """
@@ -280,42 +295,92 @@ def workspace_cmd_levels(
 
     stage = term.stage_index
     if stage + 1 >= len(stages):
+        # Nothing left to promote to, but the final stage is the longest one and the most
+        # interesting to watch: keep printing the same window line so the run reports what it
+        # is actually achieving there. (4.8's own run lost this after iteration 500 -- the
+        # numbers are still recoverable from `Metrics/ee_pose/success`, but only unfiltered.)
+        if env.common_step_counter % window_steps == 0:
+            succ = term.instant_success
+            reach = getattr(term, "reachable", None)
+            if reach is not None and not bool(reach.all()):
+                mask = reach.to(succ.dtype)
+                inst_reach = ((succ * mask).sum() / mask.sum().clamp(min=1.0)).item()
+            else:
+                inst_reach = succ.mean().item()
+            print(
+                f"[curriculum] window step {env.common_step_counter} stage {stage} (final), "
+                f"instant success {inst_reach:.3f} over reachable, raw {succ.mean().item():.3f}, "
+                f"reachable share {getattr(term, 'reachable_fraction', 1.0):.3f}"
+            )
         return torch.tensor(float(stage), device=env.device)
 
-    # Two corrections to the naive gate, both forced by measurement:
+    # Two things are measured every step and one only every window:
     #
-    # * the statistic. ``success_rate`` is a running average since each environment's last
-    #   resample, so the 1-2 s transient after every 4-8 s command change is inside it and it
-    #   sits far below the 0.8 the episode log reports. The first 4.7 attempt therefore never
-    #   promoted out of stage 1. ``success`` (the instantaneous fraction on target, which is
-    #   what ``Metrics/ee_pose/success`` prints) is the quantity the curriculum is asking
-    #   about, so it is what the gate reads now.
-    # * the noise. That fraction fluctuates by a few percent per sample; an exponential moving
-    #   average is what makes the gate a measurement rather than a coin flip.
-    inst = term.instant_success.mean().item()
-    rate = term.success_rate.mean().item()
-    term.success_ema = inst if term.success_ema is None else 0.95 * term.success_ema + 0.05 * inst
+    # * ``instant_success`` -- the fraction of environments on target *now*, which is what
+    #   ``Metrics/ee_pose/success`` prints. ``success_rate`` (a running average since each
+    #   environment's last resample) is dragged down by the transient after every command
+    #   change; the first 4.7 attempt read that one and never promoted.
+    # * ``inst_reach`` -- the same fraction over the reachable subset, which is what the gate
+    #   uses. ``raw`` is the unfiltered number, printed alongside so a high gate value can
+    #   never be mistaken for the box being solved.
+    succ = term.instant_success
+    reach = getattr(term, "reachable", None)
+    if reach is not None and not bool(reach.all()):
+        mask = reach.to(succ.dtype)
+        inst_reach = ((succ * mask).sum() / mask.sum().clamp(min=1.0)).item()
+    else:
+        inst_reach = succ.mean().item()
+    raw = succ.mean().item()
+    term.success_ema = inst_reach if term.success_ema is None else 0.95 * term.success_ema + 0.05 * inst_reach
 
-    if env.common_step_counter % env.max_episode_length != 0:
-        return torch.tensor(float(stage), device=env.device)
-
-    if env.common_step_counter % 20000 == 0:
+    # one line at startup, so a short smoke run still shows which box is active and how much
+    # of it the reachability oracle considers solvable
+    if not getattr(term, "startup_logged", False):
+        term.startup_logged = True
         print(
-            f"[curriculum] gate at step {env.common_step_counter}: stage {stage}, "
-            f"success_ema {term.success_ema:.3f} (instant {inst:.3f}, running rate {rate:.3f})"
+            f"[curriculum] ee_pose start at stage {stage} "
+            f"({cfg.stage_names[stage] if cfg.stage_names else ''}): "
+            f"reachable share {getattr(term, 'reachable_fraction', 1.0):.3f}, "
+            f"ranges {cfg.ranges}"
         )
 
-    if min_stage_steps and env.common_step_counter - term.stage_entered_step < min_stage_steps:
+    # one evaluation window per ``window_steps`` policy steps
+    if env.common_step_counter % window_steps != 0:
         return torch.tensor(float(stage), device=env.device)
 
-    if term.success_ema > promote_at:
+    elapsed = env.common_step_counter - term.stage_entered_step
+    hits = getattr(term, "gate_hits", 0)
+    hits = hits + 1 if term.success_ema > promote_at else 0
+    term.gate_hits = hits
+    print(
+        f"[curriculum] window step {env.common_step_counter} stage {stage} "
+        f"({cfg.stage_names[stage] if cfg.stage_names else ''}), "
+        f"success_ema {term.success_ema:.3f} over reachable, raw {raw:.3f}, "
+        f"reachable share {getattr(term, 'reachable_fraction', 1.0):.3f}, "
+        f"hits {hits}/{promote_windows}, {elapsed} steps in stage"
+    )
+
+    if min_stage_steps and elapsed < min_stage_steps:
+        return torch.tensor(float(stage), device=env.device)
+
+    reason = None
+    if hits >= promote_windows:
+        reason = "success"
+    elif force_after_steps and elapsed >= force_after_steps and term.success_ema > force_floor:
+        reason = "forced"
+
+    if reason is not None:
         new_stage = stage + 1
         box = stages[new_stage]
+        ema_at_promotion = term.success_ema
         term.set_stage(new_stage, box)
+        term.gate_hits = 0
+        # restart the moving average: the new box is being judged, not the old one
+        term.success_ema = None
         print(
             f"[curriculum] ee_pose stage {stage} -> {new_stage} "
-            f"({cfg.stage_names[new_stage] if cfg.stage_names else ''}) "
-            f"at success_ema {term.success_ema:.3f} (instant {inst:.3f}, running rate {rate:.3f})"
+            f"({cfg.stage_names[new_stage] if cfg.stage_names else ''}) by {reason}: "
+            f"success_ema {ema_at_promotion:.3f} (raw {raw:.3f}) after {elapsed} steps"
         )
         return torch.tensor(float(new_stage), device=env.device)
 

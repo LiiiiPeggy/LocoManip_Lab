@@ -195,6 +195,14 @@ class KeyboardTeleopConfig:
     its edge.
     """
 
+    profile: str = "4.8"
+    """Which measured workspace the clamps come from (``4.7``, ``4.8``, ``4.8_explore``).
+
+    ``4.7`` and ``4.8`` are boxes a policy has been measured to hold. ``4.8_explore`` is the
+    unverified candidate box: it exists so the operator can feel where the policy gives up,
+    and the status line says ``探索区`` while the target is outside the verified box.
+    """
+
     ori_step_deg: float = 5.0
     """degrees per discrete attitude press"""
 
@@ -217,6 +225,14 @@ class KeyboardTeleopConfig:
 
     home_rate_scale: float = 1.0
     """the reset walk-back uses the ordinary rates times this"""
+
+    def __post_init__(self) -> None:
+        """Take the clamps from the selected profile, so a profile switch is one config line."""
+        if _WS is None:
+            return
+        box = _WS.degrees(_WS.keyboard_box(self.profile))
+        self.pos_limits = tuple(tuple(box[k]) for k in ("pos_x", "pos_y", "pos_z"))
+        self.ori_limits_deg = tuple(tuple(box[k]) for k in ("roll", "pitch", "yaw"))
 
 
 class KeyboardTeleopController:

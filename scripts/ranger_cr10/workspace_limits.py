@@ -135,6 +135,102 @@ KEYBOARD_BOX = {
 }
 
 
+# ---------------------------------------------------------------------------------------
+# Stage 4.8: a second, larger step
+# ---------------------------------------------------------------------------------------
+# The 4.7 keyboard box above is the starting point, not the old rectangular box: it is what
+# the 4.7 policy was *measured* to hold, so it is the one box in this file that is known to be
+# solvable before training starts. Stage 4.8 interpolates from it towards the brief's new
+# candidate box, one axis at a time, so a stage never asks for more than it can hold.
+#
+# The candidate box is *not* assumed reachable. ``check_workspace_reach.py --box 4.8``
+# measures each direction and ``TARGET_BOX_48`` below is the capped version of the brief's
+# numbers -- see the 4.8 notes in ``docs/plans/teleop_plan.md`` section 18 for the measurement
+# each cap comes from.
+TARGET48_BRIEF = _box(
+    (-0.25, 0.40),
+    (-0.50, 0.30),
+    (-0.30, 0.40),
+    (-math.radians(50), math.radians(60)),
+    (-math.radians(35), math.radians(60)),
+    (-math.radians(80), math.radians(80)),
+)
+
+
+def _blend_box(a, b, s):
+    """Per-axis interpolation, so an axis that cannot grow does not hold the others back."""
+    out = {}
+    for k in a:
+        lo, hi = a[k]
+        lo2, hi2 = b[k]
+        out[k] = (lo + s * (lo2 - lo), hi + s * (hi2 - hi))
+    return out
+
+
+# Final target: the brief's candidate box, capped where the reach study says the arm cannot
+# hold it. Filled in after the measurement; until then it is the brief's box.
+TARGET_BOX_48 = _blend_box(TARGET48_BRIEF, TARGET48_BRIEF, 0.0)
+
+# Stage 0 is the verified 4.7 box, stages 1 and 2 are a third and two thirds of the way to the
+# final target.
+STAGE_BOXES_48 = (
+    KEYBOARD_BOX,
+    _blend_box(KEYBOARD_BOX, TARGET_BOX_48, 1 / 3),
+    _blend_box(KEYBOARD_BOX, TARGET_BOX_48, 2 / 3),
+    TARGET_BOX_48,
+)
+STAGE_NAMES_48 = ("stage0_4.7", "stage1_1/3", "stage2_2/3", "stage3_4.8")
+
+PROMOTE_AT_48 = 0.80
+PROMOTE_WINDOWS_48 = 3
+
+# Stage the 4.8 run starts at: 1, because 4.7 already holds stage 0 (that box is exactly what
+# the 4.7 policy was verified against) and replaying it would cost 2000 iterations to prove
+# something already measured.
+START_STAGE_48 = 1
+
+
+# What the keyboard may command in 4.8, measured the same way as the 4.7 box above: each
+# axis pushed to its steady-state 50 mm / 5 deg limit by `teleop_eval.py --suite workspace`
+# on the deployed 4.8 policy (`stage48a_ppo/model_5999`, outputs/stage48/final). The sweep
+# runs to the candidate box, not to the keyboard clamps, so a limit here is a measurement
+# rather than a restatement of the previous box:
+#
+#     X   -0.05 .. +0.40      Y   -0.50 .. +0.10      Z   -0.25 .. +0.40
+#     roll -30 .. +60 deg     pitch -20 .. +60 deg    yaw -80 .. +80 deg
+#
+# One axis is *smaller* than the 4.7 box: X- goes from -0.10 to -0.05, because at -0.10 the
+# 4.8 policy holds 54 mm / 3.7 deg (+-50 mm is the criterion). The rest grew. That asymmetry
+# is the measurement, not a mistake -- see the 4.8 notes in the plan's section 18.
+KEYBOARD_BOX_48 = {
+    "pos_x": (-0.05, 0.40),
+    "pos_y": (-0.50, 0.10),
+    "pos_z": (-0.25, 0.40),
+    "roll": (-math.radians(30), math.radians(60)),
+    "pitch": (-math.radians(20), math.radians(60)),
+    "yaw": (-math.radians(80), math.radians(80)),
+}
+
+# The candidate box, exposed as an explicitly *unverified* profile: the operator may drive
+# into it to see for themselves, and the status line marks the区域 beyond the measured box.
+KEYBOARD_EXPLORE_BOX = dict(TARGET48_BRIEF)
+
+KEYBOARD_PROFILES = {
+    "4.7": KEYBOARD_BOX,
+    "4.8": KEYBOARD_BOX_48,
+    "4.8_explore": KEYBOARD_EXPLORE_BOX,
+}
+DEFAULT_KEYBOARD_PROFILE = "4.8"
+
+
+def keyboard_box(profile: str | None = None):
+    """The clamp box for one keyboard profile, defaulting to the deployed one."""
+    name = profile or DEFAULT_KEYBOARD_PROFILE
+    if name not in KEYBOARD_PROFILES:
+        raise KeyError(f"unknown keyboard profile {name!r}; choose from {sorted(KEYBOARD_PROFILES)}")
+    return KEYBOARD_PROFILES[name]
+
+
 def as_ranges_kwargs(box):
     """``**kwargs`` for a ``Ranges`` configclass."""
     return {k: tuple(v) for k, v in box.items()}

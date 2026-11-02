@@ -396,13 +396,50 @@ def _ws_module():
 WS = _ws_module()
 
 
-def workspace_suite(sim: Sim, out: Path, hold: int = 30, pos_tol: float = 0.030, ori_tol_deg: float = 2.0):
+def _reach_oracle():
+    """The same reachability table the training curriculum uses, as a Python predicate.
+
+    Loaded from ``scripts/ranger_cr10/reach_table_48.json`` rather than recomputed: the point
+    of the evaluation is to separate "the arm cannot hold this" from "the policy does not
+    hold this", and both sides have to agree on the first question. Returns a callable that
+    answers ``True`` when the target is inside the cell's reachable position range, or
+    ``None`` when the table is missing (then the report falls back to the unfiltered numbers).
+    """
+    path = Path(WS.__file__).resolve().parent / "reach_table_48.json"
+    if not path.is_file():
+        return lambda dpos, drpy: True
+    table = json.loads(path.read_text())
+    grid = {k: np.array(table[k]) for k in ("roll", "pitch", "yaw")}
+    limits = np.array(table["limits"])
+
+    def reach(dpos, drpy):
+        idx = [int(np.argmin(np.abs(grid[k] - drpy[i]))) for i, k in enumerate(("roll", "pitch", "yaw"))]
+        lo = limits[idx[0], idx[1], idx[2], 0::2]
+        hi = limits[idx[0], idx[1], idx[2], 1::2]
+        return bool(np.all(np.asarray(dpos) >= lo) and np.all(np.asarray(dpos) <= hi))
+
+    return reach
+
+
+def workspace_suite(
+    sim: Sim,
+    out: Path,
+    hold: int = 30,
+    pos_tol: float = 0.030,
+    ori_tol_deg: float = 2.0,
+    scan_box: str = "profile",
+):
     """E1: how far along each axis does the policy hold the reference accuracy?
 
     Single axis at a time, held for ``hold`` policy steps (3 s), error taken from the last
     five steps. The largest offset that stays under the thresholds is the *usable* range --
     which is the number the keyboard clamp should reflect, not the box the sampler drew from.
+
+    ``scan_box="4.8"`` sweeps past the keyboard clamps to the candidate box, which is how the
+    4.8 clamps were measured in the first place; with ``"profile"`` the sweep stops where the
+    keyboard stops.
     """
+    scan = WS.KEYBOARD_BOX if scan_box == "profile" else WS.TARGET_BOX_48
     print()
     print("=" * 108)
     print(f"workspace suite (单轴, 每档保持 {hold} 步; 判据 位置 {pos_tol * 1000:.0f} mm / 姿态 {ori_tol_deg:.1f}°)")
@@ -416,9 +453,9 @@ def workspace_suite(sim: Sim, out: Path, hold: int = 30, pos_tol: float = 0.030,
         "Yaw": (2, "yaw"),
     }
     results = []
-    print(f"  {'轴':<6}{'方向':<6}{'命令范围':>16}{'稳定跟踪到':>12}{'该点误差':>14}   首个失败点")
+    print(f"  {'轴':<6}{'方向':<6}{'扫掠范围':>16}{'稳定跟踪到':>12}{'该点误差':>14}   首个失败点")
     for name, (idx, key) in axes.items():
-        lo, hi = WS.KEYBOARD_BOX[key] if name in ("X", "Y", "Z") else WS.KEYBOARD_BOX[key]
+        lo, hi = scan[key]
         step = 0.05 if name in ("X", "Y", "Z") else math.radians(10)
         unit = "m" if name in ("X", "Y", "Z") else "°"
         for sign, edge in ((1, hi), (-1, lo)):
@@ -454,6 +491,14 @@ def workspace_suite(sim: Sim, out: Path, hold: int = 30, pos_tol: float = 0.030,
                 if bad_at is not None
                 else "整段都在界内"
             )
+            # 4.7's roll+ curve failed around 10-20 deg and then came back under the threshold
+            # by 40 deg. Reporting only the furthest passing point would have hidden the bad
+            # band, so a curve that recovers after failing is flagged rather than averaged.
+            first_bad_i = next((i for i, c in enumerate(curve) if c[1] > pos_tol or c[2] > ori_tol_deg), None)
+            dip = first_bad_i is not None and any(c[1] <= pos_tol and c[2] <= ori_tol_deg for c in curve[first_bad_i:])
+            if dip:
+                n_bad = sum(1 for c in curve if c[1] > pos_tol or c[2] > ori_tol_deg)
+                bad_txt += f"  [非单调: {n_bad}/{len(curve)} 档越界后回升]"
             print(
                 f"  {name:<6}{'+' if sign > 0 else '-':<6}{rng:>14}{unit}{shown:>10.3f}{unit}"
                 f"{last_err[0] * 1000:>7.0f}mm{last_err[1]:>6.2f}°   {bad_txt}"
@@ -469,6 +514,7 @@ def workspace_suite(sim: Sim, out: Path, hold: int = 30, pos_tol: float = 0.030,
                     err_ori=last_err[1],
                     first_bad=bad_at,
                     first_bad_err=bad_err,
+                    nonmonotonic=dip,
                     curve=curve,
                 )
             )
@@ -503,15 +549,24 @@ def coverage_suite(sim: Sim, out: Path, n: int = 60, hold: int = 30, seed: int =
         [[-3.92, 0.94], [-1.570, 1.570], [-2.860, 2.860], [-3.140, 3.140], [-3.140, 3.140], [-3.140, 3.140]]
     )
     rng = np.random.default_rng(seed)
-    # ``candidate`` is the box the task brief asked for (comparable across policies and with the
-    # stage-4.6 baseline); ``keyboard`` is the smaller box the deployed keyboard actually allows,
-    # which is what an operator will use.
-    box = WS.TARGET_BOX if box_name == "candidate" else WS.KEYBOARD_BOX
+    # ``candidate`` is the box the 4.7 brief asked for (comparable across policies and with the
+    # stage-4.6 baseline); ``keyboard`` is the smaller box the deployed keyboard allows. The
+    # ``4.8*`` names are the stage-4.8 boxes, so a policy can be compared on old and new
+    # targets with the same protocol.
+    boxes = {
+        "candidate": WS.TARGET_BOX,
+        "keyboard": WS.KEYBOARD_BOX,
+        "4.8": WS.TARGET_BOX_48,
+        "4.8_keyboard": WS.KEYBOARD_BOX_48,
+    }
+    box = boxes[box_name]
+    reach = _reach_oracle()
     print()
     print("=" * 108)
     print(f"coverage suite ({n} 个六维目标, 从 {box_name} 盒均匀抽取, 每个保持 {hold} 步)")
     print("=" * 108)
     rows_out, pos_e, ori_e = [], [], []
+    reachable_flag = []
     at_limit = 0
     n_contact = 0
     for _ in range(n):
@@ -524,6 +579,7 @@ def coverage_suite(sim: Sim, out: Path, n: int = 60, hold: int = 30, seed: int =
         oe = math.degrees(float(np.mean([r["ee_ori"] for r in rows[-5:]])))
         pos_e.append(pe)
         ori_e.append(oe)
+        reachable_flag.append(reach(dpos, drpy))
         q = np.array([d.qpos[a] for a in arm_adr])
         if np.any(np.abs(q - limits[:, 0]) < 0.02) or np.any(np.abs(q - limits[:, 1]) < 0.02):
             at_limit += 1
@@ -532,23 +588,123 @@ def coverage_suite(sim: Sim, out: Path, n: int = 60, hold: int = 30, seed: int =
         rows_out.append(dict(dpos=dpos, drpy=drpy, pos_err=pe, ori_err_deg=oe))
     pos_e = np.array(pos_e)
     ori_e = np.array(ori_e)
-    for tag, pos_lim, ori_lim in (("30 mm / 2°", 0.030, 2.0), ("50 mm / 5°", 0.050, 5.0), ("80 mm / 10°", 0.080, 10.0)):
+    reach_arr = np.array(reachable_flag, dtype=bool)
+    print(
+        f"  可达性: {reach_arr.mean() * 100:.1f}% 的目标在可达集内 ({int(reach_arr.sum())}/{n}), "
+        "下面同时报全部目标与可达目标两个口径"
+    )
+    tiers = (("30 mm / 2°", 0.030, 2.0), ("50 mm / 5°", 0.050, 5.0), ("80 mm / 10°", 0.080, 10.0))
+    for tag, pos_lim, ori_lim in tiers:
         ok = (pos_e <= pos_lim) & (ori_e <= ori_lim)
-        print(f"  精度档 {tag:<12}: 成功率 {ok.mean() * 100:5.1f}%")
+        ok_r = ok & reach_arr
+        cond = ok_r.sum() / max(int(reach_arr.sum()), 1)
+        print(f"  精度档 {tag:<12}: 全部目标 {ok.mean() * 100:5.1f}%   可达目标 {cond * 100:5.1f}%")
     print(f"  位置误差 中位 {np.median(pos_e) * 1000:.0f} mm, p90 {np.percentile(pos_e, 90) * 1000:.0f} mm")
     print(f"  姿态误差 中位 {np.median(ori_e):.1f}°, p90 {np.percentile(ori_e, 90):.1f}°")
+    if reach_arr.any() and (~reach_arr).any():
+        print(
+            f"  可达目标误差 中位 {np.median(pos_e[reach_arr]) * 1000:.0f} mm / "
+            f"{np.median(ori_e[reach_arr]):.1f}°; 不可达目标 "
+            f"{np.median(pos_e[~reach_arr]) * 1000:.0f} mm / {np.median(ori_e[~reach_arr]):.1f}°"
+        )
     print(f"  关节接近限位(<0.02 rad)的样本 {at_limit}/{n}; 手臂与地面/货箱接触 {n_contact}/{n}")
     return dict(
         rows=rows_out,
+        reachable=reachable_flag,
         success={
             t: float(((pos_e <= pos_lim) & (ori_e <= ori_lim)).mean())
             for t, pos_lim, ori_lim in (("30mm2deg", 0.030, 2.0), ("50mm5deg", 0.050, 5.0), ("80mm10deg", 0.080, 10.0))
         },
+        success_reachable={
+            t: float(((pos_e <= pos_lim) & (ori_e <= ori_lim) & reach_arr).sum() / max(int(reach_arr.sum()), 1))
+            for t, pos_lim, ori_lim in (("30mm2deg", 0.030, 2.0), ("50mm5deg", 0.050, 5.0), ("80mm10deg", 0.080, 10.0))
+        },
+        reachable_fraction=float(reach_arr.mean()),
         pos_median=float(np.median(pos_e)),
         ori_median=float(np.median(ori_e)),
         at_limit=at_limit,
         contact=n_contact,
     )
+
+
+def path_suite(sim: Sim, out: Path, pos_rate: float = 0.10, ori_every: int = 3, hold: int = 20, scan_box: str = "4.8"):
+    """E3 (stage 4.8): move the target *continuously*, the way a keyboard does.
+
+    The workspace suite holds each endpoint still and reads the steady-state error; an
+    operator never does that. Here the target walks from neutral to the edge at the keyboard's
+    own rate -- 0.10 m/s for position, one 5 deg press every ``ori_every`` policy steps for
+    attitude -- and the report separates the error *while moving* (tracking lag) from the
+    error after the target stops (convergence). A policy can be excellent at the second and
+    useless at the first, and only the second is visible in a static test.
+    """
+    axes = {
+        "X": (0, "pos_x"),
+        "Y": (1, "pos_y"),
+        "Z": (2, "pos_z"),
+        "Roll": (0, "roll"),
+        "Pitch": (1, "pitch"),
+        "Yaw": (2, "yaw"),
+    }
+    dt = 0.1  # one policy step
+    print()
+    print("=" * 108)
+    print(f"path suite (目标连续移动: 位置 {pos_rate:.2f} m/s, 姿态每 {ori_every} 步 5°, 到位后保持 {hold} 步)")
+    print("=" * 108)
+    print(f"  {'轴':<6}{'方向':<6}{'终点':>10}{'运动中最大':>12}{'运动中平均':>12}{'到位后':>12}{'超调':>10}")
+    rows_out = []
+    box = WS.KEYBOARD_BOX if scan_box == "profile" else WS.KEYBOARD_BOX_48
+    for name, (idx, key) in axes.items():
+        lo, hi = box[key]
+        is_pos = name in ("X", "Y", "Z")
+        for sign, edge in ((1, hi), (-1, lo)):
+            sim.reset()
+            pos = [0.0, 0.0, 0.0]
+            rpy = [0.0, 0.0, 0.0]
+            tgt = pos if is_pos else rpy
+            moving = []
+            k = 0
+            while abs(tgt[idx]) < abs(edge) - 1e-9:
+                if is_pos:
+                    tgt[idx] += sign * pos_rate * dt
+                else:
+                    tgt[idx] += sign * math.radians(5.0)
+                tgt[idx] = sign * min(abs(tgt[idx]), abs(edge))
+                sim.set_commands(0.0, 0.0, ee_command_from_offset(pos, rpy))
+                for _ in range(1 if is_pos else ori_every):
+                    r = sim.step()
+                    moving.append(r["ee_pos"] if is_pos else math.degrees(r["ee_ori"]))
+                k += 1
+            settled = [sim.step() for _ in range(hold)]
+            if is_pos:
+                moving_max, moving_mean = max(moving), float(np.mean(moving))
+                final = float(np.mean([r["ee_pos"] for r in settled[-5:]]))
+                over = max(0.0, max([r["ee_pos"] for r in settled]) - final)
+                unit = "m"
+            else:
+                moving_max = max(moving)
+                moving_mean = float(np.mean(moving))
+                final = float(np.mean([math.degrees(r["ee_ori"]) for r in settled[-5:]]))
+                over = max(0.0, max([math.degrees(r["ee_ori"]) for r in settled]) - final)
+                unit = "deg"
+            scale = 1000 if is_pos else 1
+            print(
+                f"  {name:<6}{'+' if sign > 0 else '-':<6}{sign * abs(edge) * (1 if is_pos else 57.2957795):>9.2f}"
+                f"{'m' if is_pos else '°'}{moving_max * scale:>11.1f}{moving_mean * scale:>12.1f}"
+                f"{final * scale:>12.1f}{over * scale:>10.1f}   ({'mm' if is_pos else 'deg'})"
+            )
+            rows_out.append(
+                dict(
+                    axis=name,
+                    sign=sign,
+                    edge=sign * abs(edge),
+                    moving_max=moving_max,
+                    moving_mean=moving_mean,
+                    settled=final,
+                    overshoot=over,
+                    unit=unit,
+                )
+            )
+    return rows_out
 
 
 def convergence_commands():
@@ -655,7 +811,9 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--policy", default=DEFAULT_POLICY)
     ap.add_argument(
-        "--suite", default="all", choices=["drift", "modes", "convergence", "terrain", "workspace", "coverage", "all"]
+        "--suite",
+        default="all",
+        choices=["drift", "modes", "convergence", "terrain", "workspace", "coverage", "path", "all"],
     )
     ap.add_argument("--out", default="outputs/stage46_mujoco")
     ap.add_argument(
@@ -668,8 +826,14 @@ def main() -> None:
     ap.add_argument(
         "--coverage_box",
         default="candidate",
-        choices=["candidate", "keyboard"],
+        choices=["candidate", "keyboard", "4.8", "4.8_keyboard"],
         help="which workspace the coverage suite draws its targets from",
+    )
+    ap.add_argument(
+        "--scan_box",
+        default="profile",
+        choices=["profile", "4.8"],
+        help="how far the workspace suite pushes each axis (profile = the keyboard's own clamps)",
     )
     args = ap.parse_args()
 
@@ -691,9 +855,11 @@ def main() -> None:
     if args.suite in ("terrain", "all"):
         payload["terrain"] = terrain_suite(sim, out)
     if args.suite in ("workspace", "all"):
-        payload["workspace"] = workspace_suite(sim, out)
+        payload["workspace"] = workspace_suite(sim, out, scan_box=args.scan_box)
     if args.suite in ("coverage", "all"):
         payload["coverage"] = coverage_suite(sim, out, box_name=args.coverage_box)
+    if args.suite in ("path", "all"):
+        payload["path"] = path_suite(sim, out, scan_box=args.scan_box)
 
     suffix = f"_{args.tag}" if args.tag else ""
     (out / f"mujoco_{args.suite}{suffix}.json").write_text(json.dumps(payload, indent=1))

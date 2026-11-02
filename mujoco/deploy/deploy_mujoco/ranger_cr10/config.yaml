@@ -18,8 +18,11 @@
 # comment says which. Changing an interface number (scales, decimation, default pose) would
 # make the policy see something it was not trained on, so those are not tuning knobs.
 
-# stage 4.7: the workspace-expanded policy (the 4.5j one is still there for comparison)
-policy_path: "{CURRENT_ROOT_DIR}/logs/rsl_rl/ranger_cr10_teleop/2026-10-31_23-09-08_stage47c_ppo/model_2999.pt"
+# stage 4.8: the twice-expanded policy. Best of the 5000/5500/5999 checkpoints on the 4.8 box
+# (50 mm / 5 deg coverage 76.7% vs 71.7% and 73.3%; position median 24 mm vs 25 and 28).
+# The 4.7 one is still there for comparison:
+#   2026-10-31_23-09-08_stage47c_ppo/model_2999.pt
+policy_path: "{CURRENT_ROOT_DIR}/logs/rsl_rl/ranger_cr10_teleop/2026-11-02_00-30-47_stage48a_ppo/model_5999.pt"
 scene_path: "{CURRENT_ROOT_DIR}/mujoco/robots/ranger_cr10/scene.xml"
 
 # Isaac: sim.dt = 0.005, decimation = 20 -> the policy runs at 10 Hz.
@@ -41,6 +44,11 @@ keyboard:
   wz_max: 0.5
   vel_rate: 0.5
   vel_return_rate: 1.0
+  # Which measured workspace the clamps come from, from scripts/ranger_cr10/workspace_limits.py:
+  #   4.7          the box the 4.7 policy was verified to hold
+  #   4.8          the box the 4.8 policy was verified to hold (default)
+  #   4.8_explore  the unverified candidate box; the status line marks the 探索区
+  profile: "4.8"
 
 viewer: true
 status_fps: 5.0

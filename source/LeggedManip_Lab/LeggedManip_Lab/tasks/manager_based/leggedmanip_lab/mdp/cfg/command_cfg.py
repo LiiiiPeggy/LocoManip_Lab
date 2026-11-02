@@ -82,6 +82,19 @@ class UniformTCPBodyPoseCommandCfg(UniformPoseCommandCfg):
     """Stage to begin at. Non-zero only when resuming a run whose curriculum already advanced
     (the 4.7 run restarted at stage 1 after the promotion gate was made stable)."""
 
+    reach_table: object = None
+    """Kinematic reachability oracle, as written by ``check_workspace_reach.py --reach-table``.
+
+    A dict of ``roll``/``pitch``/``yaw`` bin centres plus, for every bin, the per-axis
+    position range the arm can hold at that attitude *while staying connected to the default
+    posture* (stage 4.8). A sampled target outside its bin's range is counted as unreachable:
+    the policy is not blamed for it in the curriculum statistic, while the unfiltered success
+    rate keeps being logged so the exclusion is visible.
+    """
+
+    reach_filter: bool = False
+    """Whether the curriculum statistic is restricted to targets the arm can physically reach."""
+
     success_threshold: float = 0.10
     """Position error below which a command counts as reached. Tighter than the world
     task's 0.15 m because a chassis-relative target is always inside the arm's own

@@ -387,6 +387,32 @@ Artifacts (each verified by loading/playing it back, not by exit code):
    Z -0.20..+0.25, roll -30..+40 deg, pitch -20..+40 deg, yaw +-60 deg), it is asymmetric because
    the arm is, and the status line names the axis that hit its clamp.
 
+   **Stage 4.8 (2026-11-02) expanded the workspace again and fixed what stopped 4.7.** Three
+   changes, each pinned to a measurement. (a) *The curriculum gate.* 4.7 stalled because success
+   was averaged over targets the arm can never hold, so its ceiling was the reachable share;
+   the gate now counts only targets inside a kinematic reachability table
+   (`scripts/ranger_cr10/reach_table_48.json`, 5x5x5 attitude cells, checked in), promotes at
+   0.80 on three consecutive 2000-step windows, prints the *unfiltered* rate next to the filtered
+   one on every window, and has a logged forced-promotion escape hatch. The table's error was
+   measured in both directions: 3.0% "says reachable, IK cannot solve" (dangerous) against 25.5%
+   "says unreachable, IK solves" (conservative). (b) *The reward.* `4.5*exp(-d^2/0.1)` has its
+   steepest slope at 224 mm and only 1.8 reward/m at 20 mm; a second narrow term
+   `0.5*exp(-d^2/0.01)` was added and nothing else touched (gradient x2.07 at 20 mm, x1.00 at
+   300 mm). (c) *Reachability was redefined.* The 4.7 sweep walked from the default posture and
+   therefore reported `roll=-45` / `pitch=-30` as unreachable; the policy demonstrably holds roll
+   -30, so the table seeds each attitude cell with any solvable configuration and only then walks
+   position. Training: 6000 PPO iterations from 4.7's `model_2999` (iter rebased, actor
+   bit-identical), 8.9 h; **the curriculum reached the final stage at iteration 500, both times by
+   success (EMA 0.950 then 0.939, never forced)**. Results on a fixed 60-target set from the 4.8
+   box: median position error 95 -> **24 mm**, orientation 6.7 -> **2.7 deg**, 50 mm/5 deg
+   coverage 18 -> **77%** (reachable targets 85%); on the new keyboard box 16 mm / 1.6 deg and
+   95% (100% of reachable). The keyboard box is now X -0.05..+0.40, Y -0.50..+0.10,
+   Z -0.25..+0.40, roll -30..+60 deg, pitch -20..+60 deg, yaw +-80 deg, with three switchable
+   profiles (4.7 / 4.8 / 4.8_explore) and startup printing the active limits. **Honest regression:**
+   the old box's six-dimensional targets improved (36 -> 14 mm, 2.5 -> 1.6 deg), but the 14 fixed
+   convergence commands' median orientation went 0.81 -> 1.28 deg, concentrated in negative pitch
+   (B5: 0.37 -> 3.33 deg); the mechanism was not isolated by ablation and is the next thing to test.
+
 7. **New platform**: the port plan for the wheeled `rangerboxcr10lidar` (AgileX Ranger 4WS/4WD +
    Dobot CR10 + AG95) is at `docs/plans/plan.md`. **Stages 0-4 are done; stages 5-6 (MuJoCo, real-robot alignment) have not started.**
    The work lives on branch `rangercr10-world`; branch `rangercr10-teleop` (body-relative

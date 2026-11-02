@@ -49,25 +49,33 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts" / "ranger_cr10"))
 import teleop_kinematics as tk  # noqa: E402
+import workspace_limits as ws  # noqa: E402
 
 ap = argparse.ArgumentParser(description="Kinematic + collision workspace analysis.")
 ap.add_argument("--samples", type=int, default=60000)
 ap.add_argument("--box_samples", type=int, default=300)
 ap.add_argument("--out", default="outputs/stage47")
+ap.add_argument("--box", choices=("4.7", "4.8"), default="4.7", help="candidate box to test")
+ap.add_argument("--limit", type=float, default=0.55, help="furthest offset the position sweep tries (m)")
+ap.add_argument("--reach-table", default=None, help="write the reachability oracle JSON here")
+ap.add_argument("--reach-bins", type=int, default=5, help="attitude cells per axis in that table")
+ap.add_argument("--reach-validate", type=int, default=200, help="random targets used to check the table")
+ap.add_argument("--validate-only", action="store_true", help="check an existing --reach-table and exit")
 args = ap.parse_args()
 
 OUT = ROOT / args.out
 OUT.mkdir(parents=True, exist_ok=True)
 
+
+def _as_arrays(box):
+    return dict(
+        pos=tuple(box[k] for k in ws.POS_AXES),
+        rpy=tuple(box[k] for k in ws.RPY_AXES),
+    )
+
+
 OLD = dict(pos=((-0.12, 0.12), (-0.15, 0.15), (-0.12, 0.10)), rpy=((-0.40, 0.40), (-0.40, 0.40), (-0.50, 0.50)))
-NEW = dict(
-    pos=((-0.30, 0.30), (-0.35, 0.35), (-0.25, 0.30)),
-    rpy=(
-        (-math.radians(45), math.radians(45)),
-        (-math.radians(45), math.radians(45)),
-        (-math.radians(60), math.radians(60)),
-    ),
-)
+NEW = _as_arrays(ws.TARGET_BOX_48 if args.box == "4.8" else ws.TARGET_BOX)
 
 P0 = tk.P_NEUTRAL
 R0 = tk.R_NEUTRAL
@@ -106,7 +114,7 @@ def ok(pos, rpy):
     return ep < TOL_P and er < TOL_R
 
 
-def continuation(axis, sign, att_rpy, step=0.01, limit=0.45):
+def continuation(axis, sign, att_rpy, step=0.01, limit=None):
     """How far the TCP can go along one axis *while moving there continuously*.
 
     Random-restart IK answers "does any configuration reach this", and it does so unreliably:
@@ -118,6 +126,7 @@ def continuation(axis, sign, att_rpy, step=0.01, limit=0.45):
     the one that matters for a walking policy, and the multi-restart rate in part 4 is the
     kinematic bound.
     """
+    limit = args.limit if limit is None else limit
     R = tk.euler_R(att_rpy) @ R0
     q = np.asarray(tk.DEFAULT_Q, dtype=float)
     best = 0.0
@@ -153,6 +162,10 @@ def rpy_with(axis, value):
 
 
 def main() -> None:
+    if args.validate_only:
+        validate_reach_table(Path(args.reach_table), args.reach_validate)
+        return
+
     rng = np.random.default_rng(7)
 
     # -- 1. joint sweep -------------------------------------------------------------
@@ -185,7 +198,7 @@ def main() -> None:
 
     # -- 2. attitude sweep at the default position ----------------------------------
     print("\n2. 姿态可达范围(位置固定在默认点, 角度从 0 向外推)")
-    grid = [math.radians(v) for v in (5, 10, 15, 20, 25, 30, 35, 40, 45, 55, 60)]
+    grid = [math.radians(v) for v in (5, 10, 15, 20, 25, 30, 35, 40, 45, 55, 60, 70, 80)]
     att = {}
     print("   (多起点 IK 的判定, 偏宽松; 连续可达见第 3 节)")
     for k, name in enumerate(("roll", "pitch", "yaw")):
@@ -202,8 +215,13 @@ def main() -> None:
     cases = [
         ("姿态=默认", (0.0, 0.0, 0.0)),
         ("roll=+45°", (math.radians(45), 0.0, 0.0)),
+        ("roll=-45°", (math.radians(-45), 0.0, 0.0)),
         ("pitch=+45°", (0.0, math.radians(45), 0.0)),
-        ("yaw=+60°", (0.0, 0.0, math.radians(60))),
+        ("pitch=-30°", (0.0, math.radians(-30), 0.0)),
+        ("yaw=+80°", (0.0, 0.0, math.radians(80))),
+        # the two corners the 4.8 brief singles out: forward+down and back+up
+        ("pitch+45,yaw+60", (0.0, math.radians(45), math.radians(60))),
+        ("pitch-30,roll-45", (math.radians(-45), math.radians(-30), 0.0)),
     ]
     pos_reach = {}
     print(f"   {'姿态条件':<16}{'X-':>8}{'X+':>8}{'Y-':>8}{'Y+':>8}{'Z-':>8}{'Z+':>8}")
@@ -292,6 +310,147 @@ def main() -> None:
     )
     (OUT / "workspace_reach.json").write_text(json.dumps(payload, indent=1))
     print(f"\n已写出 {OUT / 'workspace_reach.json'}")
+
+    if args.reach_table:
+        write_reach_table(Path(args.reach_table))
+        validate_reach_table(Path(args.reach_table), args.reach_validate)
+
+
+def _grid(rng, bins):
+    lo, hi = rng
+    if bins == 1:
+        return [(lo + hi) / 2]
+    step = (hi - lo) / (bins - 1)
+    return [lo + i * step for i in range(bins)]
+
+
+def _seed_for_attitude(rpy, half_extents, restarts=3, seed=0):
+    """A joint configuration that reaches this attitude *somewhere* in the box.
+
+    Section 3 shows why the default position is the wrong place to ask: ``roll=-45`` is
+    unreachable at the default position but perfectly reachable elsewhere in the box, so an
+    oracle that only probes the default would mark a whole attitude slice unreachable. The
+    probe therefore tries the default first and then the six axis extremes, and takes the
+    first pose it can actually solve.
+    """
+    R = tk.euler_R(rpy) @ R0
+    rng = np.random.default_rng(seed)
+    guesses = [tk.DEFAULT_Q, np.zeros(6)] + [rng.uniform(tk.LIMITS[:, 0], tk.LIMITS[:, 1]) for _ in range(restarts)]
+    probes = [np.zeros(3)]
+    for k in range(3):
+        for sign in (-1, 1):
+            off = np.zeros(3)
+            off[k] = sign * half_extents[k]
+            probes.append(off)
+    for off in probes:
+        for g in guesses:
+            ep, er, q = tk.ik(P0 + off, R, g)
+            if ep < 1e-3 and er < 1e-3:
+                return q, off
+    return None, None
+
+
+def _extent_from(q_start, off_start, axis, sign, R, step=0.02, limit=0.55):
+    """How far one axis continues from an already-solved pose, without changing branch."""
+    q = np.asarray(q_start, float).copy()
+    off = np.asarray(off_start, float).copy()
+    while True:
+        nxt = off.copy()
+        nxt[axis] += sign * step
+        if abs(nxt[axis]) > limit + 1e-9:
+            break
+        q_sol, ep, er, _, _ = tk.local_ik(q, P0 + nxt, R)
+        if ep > 2e-3 or er > 2e-3:
+            break
+        q, off = q_sol, nxt
+    return off[axis]
+
+
+def write_reach_table(path: Path) -> None:
+    """Build the reachability oracle both sides of training use.
+
+    One entry per cell of a regular ``bins x bins x bins`` grid over the candidate box's
+    attitude ranges. For a cell, the per-axis position range is measured as: find *one*
+    solvable pose at that attitude (default position first, then the axis extremes), then
+    walk each position axis from there at 2 cm per step, keeping the joint branch. That is
+    the reachable set *connected to a solved configuration*, which is the right notion for a
+    policy that is free to move anywhere in the box -- unlike section 3's sweep, which is
+    anchored at the default posture and therefore reports ``roll=-45`` as 0 everywhere.
+
+    The grid is coarse on purpose: reachability is a slowly varying function of attitude,
+    and ``validate_reach_table`` measures how much the binning costs.
+    """
+    bins = args.reach_bins
+    roll = _grid(NEW["rpy"][0], bins)
+    pitch = _grid(NEW["rpy"][1], bins)
+    yaw = _grid(NEW["rpy"][2], bins)
+    half = [max(abs(NEW["pos"][k][0]), abs(NEW["pos"][k][1])) for k in range(3)]
+    limits = []
+    total = len(roll) * len(pitch) * len(yaw)
+    print(f"\n5. 可达性查表: {len(roll)}x{len(pitch)}x{len(yaw)} = {total} 个姿态格, 每格 6 个方向连续推进")
+    done = 0
+    empty = 0
+    for r in roll:
+        rows_p = []
+        for p in pitch:
+            rows_y = []
+            for y in yaw:
+                R = tk.euler_R((r, p, y)) @ R0
+                q0, off0 = _seed_for_attitude((r, p, y), half)
+                if q0 is None:
+                    rows_y.append([0.0] * 6)
+                    empty += 1
+                else:
+                    row = [0.0] * 6
+                    for k in range(3):
+                        row[2 * k] = _extent_from(q0, off0, k, -1, R)
+                        row[2 * k + 1] = _extent_from(q0, off0, k, +1, R)
+                    rows_y.append(row)
+                done += 1
+            rows_p.append(rows_y)
+        limits.append(rows_p)
+        print(f"   已扫 {done}/{total} 个姿态格 (roll {math.degrees(r):+.0f}°), 无解 {empty}", flush=True)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"roll": roll, "pitch": pitch, "yaw": yaw, "limits": limits}, indent=1))
+    print(f"   已写出 {path}")
+
+
+def validate_reach_table(path: Path, n: int) -> None:
+    """Does the table's verdict match an actual IK solve? Reported, not assumed.
+
+    False positives (table says reachable, the arm cannot get there) are the dangerous
+    direction: they make the curriculum blame the policy for a physical limit. False
+    negatives simply make the gate more lenient than it needs to be.
+    """
+    table = json.loads(path.read_text())
+    axes = ("roll", "pitch", "yaw")
+    grid = [np.array(table[k]) for k in axes]
+    lim = np.array(table["limits"])
+    rng = np.random.default_rng(23)
+    fp = fn = ok = bad = 0
+    for _ in range(n):
+        off = np.array([rng.uniform(*NEW["pos"][k]) for k in range(3)])
+        rpy = np.array([rng.uniform(*NEW["rpy"][k]) for k in range(3)])
+        idx = [int(np.argmin(np.abs(grid[k] - rpy[k]))) for k in range(3)]
+        lo = lim[idx[0], idx[1], idx[2], 0::2]
+        hi = lim[idx[0], idx[1], idx[2], 1::2]
+        table_ok = bool(np.all(off >= lo) and np.all(off <= hi))
+        # independent multi-restart solve, not the continuous walk the table was built from:
+        # the question is whether the target is solvable at all, from any branch
+        ep, er, _q, _s = solve(off, rpy)
+        ik_ok = ep < TOL_P and er < TOL_R
+        if table_ok and ik_ok:
+            ok += 1
+        elif table_ok and not ik_ok:
+            fp += 1
+        elif not table_ok and ik_ok:
+            fn += 1
+        else:
+            bad += 1
+    print(
+        f"   查表校验 ({n} 个随机目标): 一致可达 {ok}, 误判可达 {fp}, 误判不可达 {fn}, 一致不可达 {bad}\n"
+        f"   总一致率 {(ok + bad) / n * 100:.1f}%; 危险方向(误判可达) {fp / n * 100:.1f}%"
+    )
 
 
 if __name__ == "__main__":

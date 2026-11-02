@@ -107,6 +107,25 @@ class UniformTCPBodyPoseCommand(UniformBodyPoseCommand):
     cfg: UniformTCPBodyPoseCommandCfg
 
     def __init__(self, cfg: UniformTCPBodyPoseCommandCfg, env):
+        # -- reachability oracle (stage 4.8), set up *before* the parent constructor -----
+        # The parent resamples the command during its own __init__, which calls
+        # `_resample_command`; these three attributes have to exist by then or the first
+        # resample raises AttributeError. A target the arm physically cannot hold is not
+        # evidence about the policy, so the curriculum statistic excludes it; the full
+        # statistic is still kept, and the gap between the two is exactly how much of the
+        # sampled box is unreachable.
+        self._reach_grid = None
+        self.reachable = torch.ones(env.num_envs, dtype=torch.bool, device=env.device)
+        self._reach_sum = torch.zeros(env.num_envs, device=env.device)
+        self._reach_count = torch.zeros(env.num_envs, device=env.device)
+        table = getattr(cfg, "reach_table", None)
+        if table is not None and getattr(cfg, "reach_filter", False):
+            self._reach_grid = {
+                axis: torch.tensor(table[axis], device=env.device, dtype=torch.float32)
+                for axis in ("roll", "pitch", "yaw")
+            }
+            self._reach_limits = torch.tensor(table["limits"], device=env.device, dtype=torch.float32)
+
         super().__init__(cfg, env)
         self.metrics["success"] = torch.zeros(self.num_envs, device=self.device)
         self._success_sum = torch.zeros(self.num_envs, device=self.device)
@@ -118,6 +137,8 @@ class UniformTCPBodyPoseCommand(UniformBodyPoseCommand):
         if self.stage_index and cfg.stage_boxes:
             for axis, values in cfg.stage_boxes[self.stage_index].items():
                 setattr(self.cfg.ranges, axis, tuple(values))
+            # the first resample above ran with stage 0's box; redo it with the resume stage
+            self._resample_command(torch.arange(self.num_envs, device=self.device))
 
     def set_stage(self, index: int, box) -> None:
         """Apply a curriculum stage and resample every environment immediately.
@@ -142,6 +163,24 @@ class UniformTCPBodyPoseCommand(UniformBodyPoseCommand):
         is therefore dragged down by the transient after every command change.
         """
         return self.metrics["success"]
+
+    @property
+    def success_rate_reachable(self) -> torch.Tensor:
+        """Success rate counting only the environments whose target is kinematically reachable."""
+        return self._reach_sum / self._reach_count.clamp(min=1.0)
+
+    @property
+    def reachable_fraction(self) -> float:
+        """Share of the sampled box that the reachability oracle considers solvable."""
+        return float(self.reachable.float().mean().item())
+
+    def _reach_limits_for(self, euler: torch.Tensor) -> torch.Tensor:
+        """Per-axis position range the arm can hold at each row's sampled attitude."""
+        idx = []
+        for k, axis in enumerate(("roll", "pitch", "yaw")):
+            centres = self._reach_grid[axis]
+            idx.append(torch.argmin(torch.abs(euler[:, k : k + 1] - centres.unsqueeze(0)), dim=1))
+        return self._reach_limits[idx[0], idx[1], idx[2]]
 
     @property
     def success_rate(self) -> torch.Tensor:
@@ -182,9 +221,25 @@ class UniformTCPBodyPoseCommand(UniformBodyPoseCommand):
         offset_quat = quat_from_euler_xyz(euler[:, 0], euler[:, 1], euler[:, 2])
         self.pose_command_b[env_ids, 3:] = quat_mul(offset_quat, default_quat)
 
+        # -- is the target physically solvable? (stage 4.8) --------------------------
+        # Measured offline by continuous IK from a solved configuration at the same attitude,
+        # so this is a property of the arm, not of the current policy -- which is what makes it
+        # usable as a filter without flattering the policy.
+        if self._reach_grid is not None:
+            lim = self._reach_limits_for(euler)
+            inside = torch.ones(n, dtype=torch.bool, device=self.device)
+            for k in range(3):
+                inside &= offset_pos[:, k] >= lim[:, 2 * k]
+                inside &= offset_pos[:, k] <= lim[:, 2 * k + 1]
+            self.reachable[env_ids] = inside
+        else:
+            self.reachable[env_ids] = True
+
         # a new target starts a new success measurement
         self._success_sum[env_ids] = 0.0
         self._success_count[env_ids] = 0.0
+        self._reach_sum[env_ids] = 0.0
+        self._reach_count[env_ids] = 0.0
 
     def _update_metrics(self):
         # the target in the world, for the error and for the debug markers
@@ -208,6 +263,10 @@ class UniformTCPBodyPoseCommand(UniformBodyPoseCommand):
         self.metrics["success"] = success
         self._success_sum += success
         self._success_count += 1.0
+        # the same measurement restricted to targets the arm can actually hold
+        reach = self.reachable.to(success.dtype)
+        self._reach_sum += success * reach
+        self._reach_count += reach
 
     def _debug_vis_callback(self, event):
         if not self.robot.is_initialized:

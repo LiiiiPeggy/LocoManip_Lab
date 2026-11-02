@@ -238,7 +238,10 @@ print("\n8b. 姿态键: 单次按键一个 ori_step, 限位等于共享工作空
 # "equals the shared definition", not "is symmetric" -- the old symmetry check is what would
 # now fail, correctly, if someone re-introduced a symmetric default by hand.
 _ws = _load_workspace()
-_ref = _ws.degrees(_ws.KEYBOARD_BOX) if _ws is not None else None
+# Stage 4.8 added profiles, so the reference is the profile the controller actually selected
+# rather than a fixed name: `4.8` is the deployed box, `4.7` the previous one, `4.8_explore`
+# the unverified candidate.
+_ref = _ws.degrees(_ws.keyboard_box(make().cfg.profile)) if _ws is not None else None
 MAX_RP = make().cfg.ori_limits_deg[0][1]
 MAX_YAW = make().cfg.ori_limits_deg[2][1]
 for axis, name, key in ((0, "roll", "roll"), (1, "pitch", "pitch"), (2, "yaw", "yaw")):
@@ -246,12 +249,10 @@ for axis, name, key in ((0, "roll", "roll"), (1, "pitch", "pitch"), (2, "yaw", "
     if _ref is not None:
         rlo, rhi = _ref[key]
         check(
-            f"{name} 限位 = workspace_limits.KEYBOARD_BOX",
+            f"{name} 限位 = workspace_limits.{make().cfg.profile}",
             abs(hi - rhi) < 1e-6 and abs(lo - rlo) < 1e-6,
             f"[{lo:+.1f}, {hi:+.1f}]deg vs [{rlo:+.1f}, {rhi:+.1f}]",
         )
-    for v, edge in ((hi, "正"), (lo, "负")):
-        pass
 c = make()
 tap(c, "2")
 _, rpy = c.pose_offset
