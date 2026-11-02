@@ -421,6 +421,55 @@ def _reach_oracle():
     return reach
 
 
+def _collision_free_oracle(sim, targets, tries: int = 12):
+    """Stage 4.9: is each target executable *without* the arm touching the chassis equipment?
+
+    The kinematic table above only says a joint configuration exists. After the collision
+    model was completed, "reachable" and "safely reachable" stopped being the same set, so the
+    coverage report has to carry both: success on every target, and success on the targets
+    that some collision-free configuration can hold. Anything else would either overstate the
+    policy (counting impossible targets as its fault) or excuse it (dropping them silently).
+    """
+    import mujoco
+
+    protected = ("lidar_link0", "d435_link", "base_link")
+    prot_ids = {mujoco.mj_name2id(sim.m, mujoco.mjtObj.mjOBJ_BODY, n) for n in protected}
+    m = sim.m
+    d = mujoco.MjData(m)
+    arm_adr = [m.jnt_qposadr[mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_JOINT, f"cr10_joint{i}")] for i in range(1, 7)]
+    rng = np.random.default_rng(0)
+    P0, R0 = tk.P_NEUTRAL, tk.R_NEUTRAL
+
+    def free(dpos, drpy):
+        R = tk.euler_R(drpy) @ R0
+        for i in range(tries):
+            guess = (
+                np.clip(tk.DEFAULT_Q + rng.normal(0, 0.5, 6), *tk.LIMITS.T)
+                if i < 3
+                else rng.uniform(tk.LIMITS[:, 0], tk.LIMITS[:, 1])
+            )
+            ep, er, q = tk.ik(P0 + np.asarray(dpos), R, guess)
+            if ep > 1e-3 or er > 1e-3:
+                continue
+            mujoco.mj_resetDataKeyframe(m, d, m.key("home").id)
+            for a, v in zip(arm_adr, q):
+                d.qpos[a] = v
+            mujoco.mj_forward(m, d)
+            hit = False
+            for c in range(d.ncon):
+                b1, b2 = m.geom_bodyid[d.contact[c].geom1], m.geom_bodyid[d.contact[c].geom2]
+                if b1 == 0 or b2 == 0:
+                    continue
+                if b1 in prot_ids or b2 in prot_ids:
+                    hit = True
+                    break
+            if not hit:
+                return True
+        return False
+
+    return [free(dpos, drpy) for dpos, drpy in targets]
+
+
 def workspace_suite(
     sim: Sim,
     out: Path,
@@ -558,6 +607,7 @@ def coverage_suite(sim: Sim, out: Path, n: int = 60, hold: int = 30, seed: int =
         "keyboard": WS.KEYBOARD_BOX,
         "4.8": WS.TARGET_BOX_48,
         "4.8_keyboard": WS.KEYBOARD_BOX_48,
+        "4.9_keyboard": WS.KEYBOARD_BOX_49,
     }
     box = boxes[box_name]
     reach = _reach_oracle()
@@ -567,11 +617,13 @@ def coverage_suite(sim: Sim, out: Path, n: int = 60, hold: int = 30, seed: int =
     print("=" * 108)
     rows_out, pos_e, ori_e = [], [], []
     reachable_flag = []
+    targets = []
     at_limit = 0
     n_contact = 0
     for _ in range(n):
         dpos = [rng.uniform(*box[k]) for k in ("pos_x", "pos_y", "pos_z")]
         drpy = [rng.uniform(*box[k]) for k in ("roll", "pitch", "yaw")]
+        targets.append((dpos, drpy))
         sim.reset()
         sim.set_commands(0.0, 0.0, ee_command_from_offset(dpos, drpy))
         rows = [sim.step() for _ in range(hold)]
@@ -593,12 +645,22 @@ def coverage_suite(sim: Sim, out: Path, n: int = 60, hold: int = 30, seed: int =
         f"  可达性: {reach_arr.mean() * 100:.1f}% 的目标在可达集内 ({int(reach_arr.sum())}/{n}), "
         "下面同时报全部目标与可达目标两个口径"
     )
+    cfree = np.array(_collision_free_oracle(sim, targets), dtype=bool)
+    print(
+        f"  无碰撞可达: {cfree.mean() * 100:.1f}% ({int(cfree.sum())}/{n})  "
+        f"—— 与运动学可达各报一列, 两者不同说明有目标只能穿过雷达完成"
+    )
     tiers = (("30 mm / 2°", 0.030, 2.0), ("50 mm / 5°", 0.050, 5.0), ("80 mm / 10°", 0.080, 10.0))
     for tag, pos_lim, ori_lim in tiers:
         ok = (pos_e <= pos_lim) & (ori_e <= ori_lim)
         ok_r = ok & reach_arr
+        ok_c = ok & cfree
         cond = ok_r.sum() / max(int(reach_arr.sum()), 1)
-        print(f"  精度档 {tag:<12}: 全部目标 {ok.mean() * 100:5.1f}%   可达目标 {cond * 100:5.1f}%")
+        cond_c = ok_c.sum() / max(int(cfree.sum()), 1)
+        print(
+            f"  精度档 {tag:<12}: 全部目标 {ok.mean() * 100:5.1f}%   运动学可达 {cond * 100:5.1f}%   "
+            f"无碰撞可达 {cond_c * 100:5.1f}%"
+        )
     print(f"  位置误差 中位 {np.median(pos_e) * 1000:.0f} mm, p90 {np.percentile(pos_e, 90) * 1000:.0f} mm")
     print(f"  姿态误差 中位 {np.median(ori_e):.1f}°, p90 {np.percentile(ori_e, 90):.1f}°")
     if reach_arr.any() and (~reach_arr).any():
@@ -620,6 +682,12 @@ def coverage_suite(sim: Sim, out: Path, n: int = 60, hold: int = 30, seed: int =
             for t, pos_lim, ori_lim in (("30mm2deg", 0.030, 2.0), ("50mm5deg", 0.050, 5.0), ("80mm10deg", 0.080, 10.0))
         },
         reachable_fraction=float(reach_arr.mean()),
+        collision_free=cfree.tolist(),
+        collision_free_fraction=float(cfree.mean()),
+        success_collision_free={
+            t: float(((pos_e <= pos_lim) & (ori_e <= ori_lim) & cfree).sum() / max(int(cfree.sum()), 1))
+            for t, pos_lim, ori_lim in (("30mm2deg", 0.030, 2.0), ("50mm5deg", 0.050, 5.0), ("80mm10deg", 0.080, 10.0))
+        },
         pos_median=float(np.median(pos_e)),
         ori_median=float(np.median(ori_e)),
         at_limit=at_limit,
@@ -652,7 +720,7 @@ def path_suite(sim: Sim, out: Path, pos_rate: float = 0.10, ori_every: int = 3, 
     print("=" * 108)
     print(f"  {'轴':<6}{'方向':<6}{'终点':>10}{'运动中最大':>12}{'运动中平均':>12}{'到位后':>12}{'超调':>10}")
     rows_out = []
-    box = WS.KEYBOARD_BOX if scan_box == "profile" else WS.KEYBOARD_BOX_48
+    box = WS.keyboard_box() if scan_box == "profile" else WS.KEYBOARD_BOX_48
     for name, (idx, key) in axes.items():
         lo, hi = box[key]
         is_pos = name in ("X", "Y", "Z")
@@ -826,7 +894,7 @@ def main() -> None:
     ap.add_argument(
         "--coverage_box",
         default="candidate",
-        choices=["candidate", "keyboard", "4.8", "4.8_keyboard"],
+        choices=["candidate", "keyboard", "4.8", "4.8_keyboard", "4.9_keyboard"],
         help="which workspace the coverage suite draws its targets from",
     )
     ap.add_argument(

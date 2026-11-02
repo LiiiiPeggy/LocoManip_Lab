@@ -69,6 +69,9 @@ WANT = {
     "Metrics/base_velocity/error_vel_yaw": "yaw_err",
     # stage 4.8: the curriculum step, so a promotion is visible in the same table as the losses
     "Curriculum/ee_pose_levels": "stage",
+    # stage 4.9: the safety signal, on the same table as the tracking error it trades against
+    "Metrics/ee_pose/collision": "collision",
+    "Metrics/ee_pose/min_clearance": "clearance",
     "Episode_Termination/base_contact": "term_contact",
     "Episode_Termination/bad_orientation": "term_ori",
     "Episode_Termination/time_out": "term_timeout",
@@ -102,6 +105,8 @@ def at(key, it):
 
 ORDER = [
     "stage",
+    "collision",
+    "clearance",
     "surrogate",
     "value",
     "entropy",
@@ -121,12 +126,15 @@ ORDER = [
 
 hdr = (
     f"{'iter':>6}{'stage':>6}{'surrogate':>11}{'value':>10}{'entropy':>10}{'lr':>10}{'std':>7}"
-    f"{'reward':>9}{'ep_len':>8}{'EE pos':>9}{'EE ori':>8}{'succ':>7}{'lin err':>9}{'yaw err':>9}"
+    f"{'reward':>9}{'ep_len':>8}{'EE pos':>9}{'EE ori':>8}{'succ':>7}"
+    f"{'coll':>8}{'clear':>9}{'lin err':>9}{'yaw err':>9}"
 )
 print(hdr)
 print("-" * len(hdr))
 FMT = {
     "stage": ".0f",
+    "collision": ".4f",
+    "clearance": ".4f",
     "surrogate": ".4f",
     "value": ".4f",
     "entropy": ".4f",
@@ -145,6 +153,8 @@ FMT = {
 }
 WIDTH = {
     "stage": 6,
+    "collision": 10,
+    "clearance": 10,
     "surrogate": 11,
     "value": 10,
     "entropy": 10,
@@ -165,6 +175,8 @@ for it in marks:
     line = f"{it:>6}"
     for k in (
         "stage",
+        "collision",
+        "clearance",
         "surrogate",
         "value",
         "entropy",

@@ -296,6 +296,18 @@ class RangerCr10TeleopEnvCfg(LeggedManipLabEnvCfg):
         # steepest slope at 224 mm and only 1.8 reward/m at 20 mm, so closing 50 -> 30 mm was
         # worth 0.09 reward. This term doubles the gradient at 20-50 mm (1.9-2.1x) and adds
         # nothing past 0.25 m, so far targets keep exactly the signal they had.
+        # stage 4.9: keep the tool and the upper arm out of the lidar, the chassis camera and
+        # the chassis body. Measured before this stage: the 4.8 policy drives the gripper
+        # 27 mm into the lidar's mesh on the way to Z-0.25 and does it on 51% of the steps of
+        # that sweep, with nothing in training able to see it (`enabled_self_collisions=False`
+        # and no collision geometry on the sensors in MuJoCo). The term is reference-relative
+        # -- see `sensor_clearance_penalty` for why an absolute margin is wrong here.
+        self.rewards.arm_sensor_clearance = RewTerm(  # type: ignore[attr-defined]
+            func=mdp.sensor_clearance_penalty,
+            weight=2.0,
+            params={"asset_cfg": SceneEntityCfg("robot"), "margin": 0.02},
+        )
+
         self.rewards.end_effector_position_tracking_fine = RewTerm(  # type: ignore[attr-defined]
             func=mdp.tcp_position_command_b_error_exp,
             weight=0.5,

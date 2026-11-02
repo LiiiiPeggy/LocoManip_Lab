@@ -187,7 +187,7 @@ PROMOTE_WINDOWS_48 = 3
 # Stage the 4.8 run starts at: 1, because 4.7 already holds stage 0 (that box is exactly what
 # the 4.7 policy was verified against) and replaying it would cost 2000 iterations to prove
 # something already measured.
-START_STAGE_48 = 1
+START_STAGE_48 = 3
 
 
 # What the keyboard may command in 4.8, measured the same way as the 4.7 box above: each
@@ -215,12 +215,32 @@ KEYBOARD_BOX_48 = {
 # into it to see for themselves, and the status line marks the区域 beyond the measured box.
 KEYBOARD_EXPLORE_BOX = dict(TARGET48_BRIEF)
 
+# Stage 4.9: the same measurement with the collision model finally complete (`model_5000`,
+# outputs/stage49/final). Everything is unchanged except the one direction the lidar occupies:
+#
+#     X   -0.10 .. +0.40      Y   -0.50 .. +0.15      Z   -0.05 .. +0.40
+#     roll -30 .. +60 deg     pitch -20 .. +60 deg    yaw -80 .. +80 deg
+#
+# Z- fell from -0.25 to -0.05 because the old range was never reachable: at Z-0.20 the tool is
+# inside the lidar's volume (measured: the tool mesh 27 mm in at Z-0.25, 44 mm at the box
+# corners), and the 4.8 policy only got there by passing through it. This is not a policy
+# regression hidden behind a clamp -- see the plan's section 19.
+KEYBOARD_BOX_49 = {
+    "pos_x": (-0.10, 0.40),
+    "pos_y": (-0.50, 0.15),
+    "pos_z": (-0.05, 0.40),
+    "roll": (-math.radians(30), math.radians(60)),
+    "pitch": (-math.radians(20), math.radians(60)),
+    "yaw": (-math.radians(80), math.radians(80)),
+}
+
 KEYBOARD_PROFILES = {
     "4.7": KEYBOARD_BOX,
     "4.8": KEYBOARD_BOX_48,
     "4.8_explore": KEYBOARD_EXPLORE_BOX,
+    "4.9": KEYBOARD_BOX_49,
 }
-DEFAULT_KEYBOARD_PROFILE = "4.8"
+DEFAULT_KEYBOARD_PROFILE = "4.9"
 
 
 def keyboard_box(profile: str | None = None):

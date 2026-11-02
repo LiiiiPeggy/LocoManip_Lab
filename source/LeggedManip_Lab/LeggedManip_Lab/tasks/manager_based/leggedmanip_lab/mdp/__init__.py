@@ -35,6 +35,11 @@ from .base_vel import (  # noqa: F401
     base_velocity_rate_l2,
 )
 from .pose_command_world import UniformPoseWorldCommand  # noqa: F401
+from .safety import (  # noqa: F401
+    arm_clearance,
+    arm_self_clearance,
+    sensor_clearance_penalty,
+)
 from .tcp import (  # noqa: F401
     TCP_ANCHOR_BODY,
     TCP_OFFSET_POS,

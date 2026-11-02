@@ -128,6 +128,10 @@ class UniformTCPBodyPoseCommand(UniformBodyPoseCommand):
 
         super().__init__(cfg, env)
         self.metrics["success"] = torch.zeros(self.num_envs, device=self.device)
+        # stage 4.9: clearance to the lidar / chassis camera / chassis, logged so the report
+        # can show whether a policy traded tracking accuracy for staying clear
+        self.metrics["min_clearance"] = torch.zeros(self.num_envs, device=self.device)
+        self.metrics["collision"] = torch.zeros(self.num_envs, device=self.device)
         self._success_sum = torch.zeros(self.num_envs, device=self.device)
         self._success_count = torch.zeros(self.num_envs, device=self.device)
         # workspace curriculum state (stage 4.7); 0 is the box this task has always used
@@ -267,6 +271,13 @@ class UniformTCPBodyPoseCommand(UniformBodyPoseCommand):
         reach = self.reachable.to(success.dtype)
         self._reach_sum += success * reach
         self._reach_count += reach
+
+        # stage 4.9: the safety signal, logged next to the tracking error it trades against
+        from .safety import total_clearance
+
+        d = total_clearance(self.robot)
+        self.metrics["min_clearance"] = d
+        self.metrics["collision"] = (d <= 0.0).to(success.dtype)
 
     def _debug_vis_callback(self, event):
         if not self.robot.is_initialized:

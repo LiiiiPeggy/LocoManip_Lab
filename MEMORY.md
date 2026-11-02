@@ -237,3 +237,20 @@ change without the guard, 0.0% with it.
   configuration (default position first, then the six axis extremes) and only then walks
   position. Use the from-default sweep for "what a single keystroke can reach"; use the seeded
   walk for "what the arm can hold at all".
+- **A visual mesh is not a collision body, and nothing reports the difference (2026-11-02).**
+  Until stage 4.9 the MuJoCo model had collision geometry only for the chassis, the steering
+  forks, the wheels and the six arm links. The lidar, both RealSense cameras and the whole
+  AG95 had *visual meshes only*, so the arm passed through them with `d.ncon` staying at 0 --
+  and every earlier "no collisions" report was therefore vacuous. Two related traps: (a) a
+  URDF `<mesh>` used for collision is *not* the real shape -- MuJoCo and PhysX both collide
+  its convex hull, so an L-shaped part needs an explicit proxy; (b) check the mesh's authored
+  units before applying a scale -- `d435.stl` is in metres while `d455.stl` is in millimetres,
+  and a blanket 0.001 made the chassis camera 1000x too small and invisible for four stages.
+- **Isaac Lab's URDF conversion merges fixed joints, so the sensors have no bodies there
+  (2026-11-02).** `robot.body_names` on the converted articulation lists the arm links and the
+  AG95 fingers but *not* `cr10_base_link`, `gripper_base_link`, `d455_link`, `lidar_link0` or
+  `d435_link`: their meshes are folded into `base_link` / `cr10_Link6`. Any safety term must
+  therefore be written in terms of bodies that exist on both sides, with the merged links'
+  offsets folded in -- looking up `lidar_link0` by name works in MuJoCo and raises in Isaac.
+  With `enabled_self_collisions=False` (every stage before 4.9) the folded-in geometry still
+  never generates a contact, so the policy could not be taught to avoid it.

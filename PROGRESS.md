@@ -413,6 +413,38 @@ Artifacts (each verified by loading/playing it back, not by exit code):
    convergence commands' median orientation went 0.81 -> 1.28 deg, concentrated in negative pitch
    (B5: 0.37 -> 3.33 deg); the mechanism was not isolated by ablation and is the next thing to test.
 
+   **Stage 4.9 (2026-11-02) gave the robot collision geometry and taught the policy to respect it.**
+   The user saw the arm pass through the lidar and the chassis camera in MuJoCo; the reason was
+   structural -- only the chassis, the steering forks, the wheels and the six arm links carried
+   collision geometry, so the lidar, both RealSenses and the whole AG95 were invisible to
+   physics and `d.ncon` stayed at 0 while the tool swept through them. Adding geometry exposed
+   the real culprit: the *palms* kept 19 mm of clearance while the *fingertips* went 27 mm into
+   the lidar at Z-0.25 (-44 mm at the keyboard-box corners), because the AG95's eight finger
+   links had never had collision bodies. The generator now emits them (two jaw boxes, one per
+   finger, leaving the jaw gap open), takes the lidar and both cameras from the URDF, fixes a
+   1000x mesh-scale error that had made the chassis camera invisible since stage 4.6, and turns
+   on robot-robot contacts with parent/child pairs excluded (30 pairs, all structural). Measured
+   with the 4.8 policy on the corrected model: **51% of the steps of the Z-0.25 sweep are in
+   contact** with the lidar, 93% at X-0.05/Z-0.25 and at low negative pitch, 5% of random
+   six-dimensional targets. Isaac Lab cannot see any of it: its URDF conversion merges fixed
+   joints, so `lidar_link0`, `d435_link`, `d455_link`, `gripper_base_link` and `cr10_base_link`
+   are not articulation bodies there at all, and `enabled_self_collisions` is False. The
+   safety signal is therefore an analytic clearance (`mdp/safety.py`: link covering spheres
+   against base-frame boxes, reference-relative 20 mm margin, validated against MuJoCo's convex
+   hulls as 94% conservative with 0% missed at the 20 mm criterion), not a contact force. A
+   6000-iteration fine-tune from 4.8's `model_5999` ran with that penalty (8.8 h, curriculum
+   starting at the final stage); **deployed checkpoint `stage49a_ppo/model_5000`**. Measured on
+   the corrected model: contact with the lidar falls from 51%/93%/93%/12% (Z-0.25 sweep,
+   X-0.05/Z-0.25, low pitch, keyboard corners) to **0% in every scenario**, and the only
+   remaining contacts (3% of random six-dimensional targets) are the wrist camera grazing its
+   own elbow. On targets that are collision-free reachable the 50 mm/5 deg success rate is
+   **identical to 4.8 (77.2% vs 77.2%)** -- the safety term costs nothing where the target is
+   executable, and the 1.7-point overall difference is exactly the 5% of targets that can only
+   be "reached" by passing through the lidar. The keyboard box is re-measured and one axis had
+   to shrink: **Z- goes from -0.25 to -0.05** because at Z-0.20 the tool is inside the lidar's
+   volume -- the old range was never physically reachable, and 4.8 only appeared to hold it by
+   penetrating. X-/Y+ grew slightly (X- -0.10, Y+ +0.15); roll/pitch/yaw unchanged.
+
 7. **New platform**: the port plan for the wheeled `rangerboxcr10lidar` (AgileX Ranger 4WS/4WD +
    Dobot CR10 + AG95) is at `docs/plans/plan.md`. **Stages 0-4 are done; stages 5-6 (MuJoCo, real-robot alignment) have not started.**
    The work lives on branch `rangercr10-world`; branch `rangercr10-teleop` (body-relative

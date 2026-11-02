@@ -33,11 +33,12 @@ What is deliberately *not* a literal copy of the URDF:
   sit at 0 for the closed pose. Welding them at 0 is the same configuration without a
   linkage that can be driven apart. The TCP is a virtual point on `cr10_Link6`, so the
   policy never sees the fingers.
-* **Contact groups.** Robot links collide with the ground only (`contype=2, conaffinity=1`),
-  wheels with the ground only (`contype=4, conaffinity=1`), the ground with everything
-  (`contype=1, conaffinity=7`). A chassis box that overlaps the wheels in space -- as it
-  does on the real robot, the wheels are inside the body's footprint -- therefore does not
-  produce a contact, which is what `enabled_self_collisions=False` means in Isaac.
+* **Contact groups.** Robot links carry `contype=10, conaffinity=9` = ground bit (2) plus the
+  self bit (8), so they collide with the ground *and with each other*; wheels carry
+  `contype=4, conaffinity=1`, so a chassis box that overlaps the wheels in space -- as it
+  does on the real robot -- still produces no contact. Parent/child pairs are excluded
+  through ``<contact><exclude>`` because adjacent links overlap at the joint by design (stage
+  4.9).
 
 Usage:
     python mujoco/robots/ranger_cr10/build_mjcf.py
@@ -124,8 +125,11 @@ MESH = {
     "box_link": "box_link.STL",
 }
 # mesh scale, as written in the URDF (the URDF mixes metres and millimetres)
-# the AG95 and RealSense meshes are authored in millimetres
-MESH_SCALE = {"d455_link": 0.001, "d435_link": 0.001}
+# The AG95 and the D455 meshes are authored in millimetres; the D435 mesh is in metres
+# (measured: 0.090 x 0.025 x 0.025 m of vertices). It was scaled by 0.001 until stage 4.9,
+# which made the chassis camera 1000x too small -- invisible, and consequently absent from
+# every previous collision and rendering check.
+MESH_SCALE = {"d455_link": 0.001}
 for _m in (
     "gripper_base_link",
     "gripper_finger1_knuckle_link",
@@ -164,6 +168,36 @@ for _w in ("fr", "fl", "rl", "rr"):
     COLLISION[f"{_w}_wheel_link"] = ("cylinder", (WHEEL_RADIUS, WHEEL_HALF_WIDTH), (0.0, 0.0, 0.0))
 for _l in ("cr10_base_link", "cr10_Link1", "cr10_Link2", "cr10_Link3", "cr10_Link4", "cr10_Link5", "cr10_Link6"):
     COLLISION[_l] = ("mesh", None, None)
+
+# Stage 4.9: the parts the arm can actually hit while reaching low. Until this stage only
+# the chassis, the steering forks, the wheels and the arm carried collision, so the lidar and
+# both cameras were *invisible to physics* -- a policy could sweep the wrist straight through
+# them and the simulator would report nothing. Everything below is taken from the URDF: the
+# lidar and the gripper base use their own meshes (MuJoCo collides the convex hull, which for
+# a lidar tower and a gripper body is close to the real shape), the cameras use the URDF's own
+# collision boxes, which are aligned with the mesh and not a rewrite of it.
+COLLISION.update(
+    {
+        "lidar_link0": ("mesh", None, None),
+        "d435_link": ("box", (0.02505, 0.090, 0.025), (0.0, -0.0175, 0.0)),
+        "d455_link": ("box", (0.026, 0.124, 0.029), (-0.00845, -0.0475, 0.0)),
+        # The tool. The AG95's eight linkage links are welded at their authored pose and the
+        # fingers reach ~0.19 m past the wrist, so a palm-only proxy reports 19 mm of
+        # clearance while the fingertips are already 27 mm *inside* the lidar's visible mesh
+        # (measured, stage 4.9). Two boxes, one per jaw, cover the fingers without filling the
+        # 5 cm gap between them -- a single AABB over the whole tool would be 14.5 cm wide and
+        # would close workspace the real gripper leaves open.
+        "gripper_base_link": [
+            ("mesh", None, None),
+            ("box", (0.047, 0.052, 0.112), (-0.0495, 0.0, 0.129)),
+            ("box", (0.047, 0.052, 0.112), (0.0495, 0.0, 0.129)),
+        ],
+    }
+)
+
+for _k, _v in list(COLLISION.items()):
+    if isinstance(_v, tuple):
+        COLLISION[_k] = [_v]
 
 # Frames with no inertial and no mesh. The camera *bodies* (``d455_link``, ``d435_link``)
 # stay: they carry a mesh and a mass, and dropping their parent frame used to take the whole
@@ -271,10 +305,12 @@ def build(links, joints, children):
     w("  <default>")
     w('    <geom friction="0.8 0.005 0.0001" solref="0.005 1" solimp="0.95 0.99 0.001"/>')
     w('    <default class="robot">')
-    # collide with the ground only; see the contype scheme in the docstring.
-    # group 3 is not drawn by default (`geomgroup` 0-2 are), so the collision proxies stay
-    # invisible unless the operator switches group 3 on.
-    w('      <geom contype="2" conaffinity="1" group="3" rgba="0 1 0 0.25"/>')
+    # ground bit (2) plus self bit (8): 10 & 9 = 8, so robot geoms collide with each other as
+    # well as with the ground (1 & 9 = 1). Wheels stay in their own class and never take part
+    # in robot-robot contacts. group 3 is not drawn by default (`geomgroup` 0-2 are), so the
+    # collision proxies stay invisible unless the operator switches group 3 on -- which the
+    # deployment does with `--collision-view`, and which `check_self_collision.py` relies on.
+    w('      <geom contype="10" conaffinity="9" group="3" rgba="0 1 0 0.25"/>')
     w("    </default>")
     w('    <default class="wheel">')
     w(
@@ -340,6 +376,17 @@ def build(links, joints, children):
     w("  </worldbody>")
     w("")
 
+    # ---- self-collision filters -------------------------------------------------------
+    # Every parent/child pair is excluded: adjacent links overlap at their joint by design, and
+    # a contact there would be a permanent penalty the policy can never remove. What is *not*
+    # excluded is the useful set -- arm link vs chassis, arm link vs lidar, arm link vs the
+    # chassis camera, wrist camera vs chassis equipment, and non-adjacent arm links.
+    w("  <contact>")
+    for a, b in contact_excludes(children):
+        w(f'    <exclude body1="{a}" body2="{b}"/>')
+    w("  </contact>")
+    w("")
+
     # ---- actuators --------------------------------------------------------------------
     w("  <actuator>")
     for j in joints:
@@ -377,6 +424,18 @@ def joint_range(j):
     if lim is None or lim.get("lower") is None:
         return (-1.57, 1.57)
     return (float(lim.get("lower")), float(lim.get("upper")))
+
+
+def contact_excludes(children):
+    """Parent/child body pairs, sorted -- the structural contacts to disable."""
+    out = set()
+    for parent, js in children.items():
+        for j in js:
+            child = j.find("child").get("link")
+            if child in DROP_LINKS:
+                continue
+            out.add(tuple(sorted((parent, child))))
+    return sorted(out)
 
 
 def qpos_names(children):
@@ -444,20 +503,21 @@ def emit_link_geoms(w, link, name, indent):
             pos, quat = VISUAL_ORIGIN[name]
             extra = f' pos="{fmt(pos)}" quat="{fmt(quat)}"'
         w(f'{pad}<geom name="{name}_vis" type="mesh" mesh="{asset}" class="visual" rgba="{rgba}"{extra}/>')
-    spec = COLLISION.get(name)
-    if spec is None or spec[0] == "mesh":
-        if spec is not None:
-            asset, _ = mesh_asset_for(name)
-            w(f'{pad}<geom name="{name}_col" type="mesh" mesh="{asset}" class="robot"/>')
+    specs = COLLISION.get(name)
+    if not specs:
         return
-    kind, size, pos = spec
-    if kind == "box":
-        w(
-            f'{pad}<geom name="{name}_col" type="box" size="{fmt((size[0] / 2, size[1] / 2, size[2] / 2))}" '
-            f'pos="{fmt(pos)}" class="robot"/>'
-        )
-    elif kind == "cylinder":
-        w(f'{pad}<geom name="{name}_col" type="cylinder" size="{fmt(size)}" pos="{fmt(pos)}" class="wheel"/>')
+    for i, (kind, size, pos) in enumerate(specs):
+        suffix = "_col" if len(specs) == 1 else f"_col{i}"
+        if kind == "mesh":
+            asset, _ = mesh_asset_for(name)
+            w(f'{pad}<geom name="{name}{suffix}" type="mesh" mesh="{asset}" class="robot"/>')
+        elif kind == "box":
+            w(
+                f'{pad}<geom name="{name}{suffix}" type="box" size="{fmt((size[0] / 2, size[1] / 2, size[2] / 2))}" '
+                f'pos="{fmt(pos)}" class="robot"/>'
+            )
+        elif kind == "cylinder":
+            w(f'{pad}<geom name="{name}{suffix}" type="cylinder" size="{fmt(size)}" pos="{fmt(pos)}" class="wheel"/>')
 
 
 def emit_link_inertial(w, link, indent):

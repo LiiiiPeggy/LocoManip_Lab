@@ -111,6 +111,18 @@ class ViewerKeyPin:
         self._geomgroup = handle.opt.geomgroup.copy()
         self._render_flags = None if handle.user_scn is None else handle.user_scn.flags.copy()
 
+    def set_geomgroup(self, groups) -> None:
+        """Change the pinned geom-group mask (used by ``--collision-view``).
+
+        The pin restores whatever it snapshotted at ``attach``, so the pinned copy has to be
+        updated too -- otherwise the next key press would put the view back.
+        """
+        if self._geomgroup is None or self._handle is None:
+            return
+        self._geomgroup[:] = groups
+        if self.enabled:
+            self._handle.opt.geomgroup[:] = self._geomgroup
+
     def restore(self) -> None:
         if not (self.enabled and self._handle is not None):
             return
@@ -240,6 +252,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "with the teleop keys: W = wireframe, 1-6 = geom groups)",
     )
     ap.add_argument("--device", default="cpu")
+    ap.add_argument(
+        "--collision-view",
+        action="store_true",
+        help="draw the collision geometry instead of the visual meshes (stage 4.9: what the "
+        "simulator actually collides with, including the lidar, both cameras and the gripper)",
+    )
     return ap
 
 
@@ -348,6 +366,38 @@ def main() -> None:
         last_action = raw
         tick += 1
 
+    # -- clearance readout (stage 4.9) -------------------------------------------------
+    # The same question the training reward asks, answered with the real collision geometry
+    # instead of the reward's sphere proxy. Bodies here are the ones in PROTECTED and the arm
+    # chain; the arm mount is left out because MuJoCo excludes it against the chassis.
+    _PROTECTED_BODIES = ("lidar_link0", "d435_link", "base_link")
+    _ARM_BODIES = (
+        "cr10_Link1",
+        "cr10_Link2",
+        "cr10_Link3",
+        "cr10_Link4",
+        "cr10_Link5",
+        "cr10_Link6",
+        "gripper_base_link",
+        "d455_link",
+    )
+
+    def _collision_geoms(names):
+        ids = {mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, n) for n in names}
+        return [g for g in range(model.ngeom) if model.geom_bodyid[g] in ids and model.geom_contype[g] != 0]
+
+    _arm_geoms = _collision_geoms(_ARM_BODIES)
+    _prot_geoms = _collision_geoms(_PROTECTED_BODIES)
+
+    def clear(cap: float = 0.10) -> float:
+        best = cap
+        for g1 in _arm_geoms:
+            for g2 in _prot_geoms:
+                d = mujoco.mj_geomDistance(model, data, g1, g2, best, None)
+                if d < best:
+                    best = d
+        return best
+
     def status() -> None:
         vx, wz = kb.velocity_command
         pos_off, rpy_off = kb.pose_offset
@@ -369,13 +419,18 @@ def main() -> None:
             elif abs(val - lim[0]) < 1e-3:
                 limits.append(f"{name}-")
         at_limit = f" | ** 已到限位: {' '.join(limits)} **" if limits else ""
+        # stage 4.9: how close the arm is to the lidar / chassis camera / chassis, so the
+        # operator can see the safety margin rather than discover it by watching a mesh go
+        # through another mesh
+        gap = clear()
+        near = f" | 间隙 {gap * 1000:4.0f}mm" if gap < 0.05 else ""
         line = (
             f"t={sim_time:6.1f}s | cmd vx {vx:+.3f} wz {wz:+.3f} -> {vx_eff:+.3f} {wz_eff:+.3f} | "
             f"base v {lin[0]:+.3f} w {ang[2]:+.3f} | "
             f"EE off {pos_off[0]:+.3f} {pos_off[1]:+.3f} {pos_off[2]:+.3f} m "
             f"rpy {np.degrees(rpy_off[0]):+5.1f} {np.degrees(rpy_off[1]):+5.1f} {np.degrees(rpy_off[2]):+5.1f} deg | "
             f"err {pos_err * 1000:5.1f} mm {np.degrees(ori_err):4.2f} deg | filter {'on' if filt.enabled else 'off'}"
-            f"{at_limit}"
+            f"{near}{at_limit}"
         )
         if sys.stdout.isatty():
             sys.stdout.write("\r" + line)
@@ -416,6 +471,11 @@ def main() -> None:
         focus_guard = ViewerFocusGuard(enabled=not args.viewer_keys)
         with mj_viewer.launch_passive(model, data, key_callback=pin.key_callback) as v:
             pin.attach(v)
+            # stage 4.9: show the geometry that actually collides (group 3) and hide the
+            # visual meshes (group 2). `attach` above snapshots the groups, so this has to
+            # come after it or the pin would immediately restore the defaults.
+            if args.collision_view:
+                pin.set_geomgroup([0, 0, 0, 1, 0, 0])
             focus_guard.on_viewer_open()
             base_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "base_link")
             v.cam.type = mujoco.mjtCamera.mjCAMERA_TRACKING
