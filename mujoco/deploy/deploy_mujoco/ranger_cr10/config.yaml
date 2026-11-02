@@ -49,9 +49,11 @@ keyboard:
   vel_return_rate: 1.0
   # Which measured workspace the clamps come from, from scripts/ranger_cr10/workspace_limits.py:
   #   4.7          the box the 4.7 policy was verified to hold
-  #   4.8          the box the 4.8 policy was verified to hold (default)
+  #   4.8          the box the 4.8 policy was verified to hold
   #   4.8_explore  the unverified candidate box; the status line marks the 探索区
-  profile: "4.8"
+  #   4.9          re-measured with the collision model complete (default): Z- stops at
+  #                -0.05 because below that the tool is inside the lidar
+  profile: "4.9"
 
 viewer: true
 status_fps: 5.0

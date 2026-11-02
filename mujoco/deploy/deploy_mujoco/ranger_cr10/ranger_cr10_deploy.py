@@ -304,7 +304,7 @@ def main() -> None:
             wz_max=kcfg["wz_max"],
             vel_rate=kcfg["vel_rate"],
             vel_return_rate=kcfg["vel_return_rate"],
-            profile=kcfg.get("profile", "4.8"),
+            profile=kcfg.get("profile", "4.9"),
         ),
     )
 
