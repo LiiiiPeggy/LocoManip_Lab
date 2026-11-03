@@ -488,7 +488,11 @@ def workspace_suite(
     4.8 clamps were measured in the first place; with ``"profile"`` the sweep stops where the
     keyboard stops.
     """
-    scan = WS.KEYBOARD_BOX if scan_box == "profile" else WS.TARGET_BOX_48
+    scan = {
+        "profile": WS.keyboard_box(),
+        "4.8": WS.TARGET_BOX_48,
+        "4.10": WS.TARGET_BOX_410,
+    }[scan_box]
     print()
     print("=" * 108)
     print(f"workspace suite (单轴, 每档保持 {hold} 步; 判据 位置 {pos_tol * 1000:.0f} mm / 姿态 {ori_tol_deg:.1f}°)")
@@ -609,6 +613,7 @@ def coverage_suite(sim: Sim, out: Path, n: int = 60, hold: int = 30, seed: int =
         "4.8_keyboard": WS.KEYBOARD_BOX_48,
         "4.9_keyboard": WS.KEYBOARD_BOX_49,
         "4.10": WS.TARGET_BOX_410,
+        "4.10_keyboard": WS.KEYBOARD_BOX_410,
     }
     box = boxes[box_name]
     reach = _reach_oracle()
@@ -986,13 +991,13 @@ def main() -> None:
     ap.add_argument(
         "--coverage_box",
         default="candidate",
-        choices=["candidate", "keyboard", "4.8", "4.8_keyboard", "4.9_keyboard", "4.10"],
+        choices=["candidate", "keyboard", "4.8", "4.8_keyboard", "4.9_keyboard", "4.10", "4.10_keyboard"],
         help="which workspace the coverage suite draws its targets from",
     )
     ap.add_argument(
         "--scan_box",
         default="profile",
-        choices=["profile", "4.8"],
+        choices=["profile", "4.8", "4.10"],
         help="how far the workspace suite pushes each axis (profile = the keyboard's own clamps)",
     )
     args = ap.parse_args()

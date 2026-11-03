@@ -18,14 +18,14 @@
 # comment says which. Changing an interface number (scales, decimation, default pose) would
 # make the policy see something it was not trained on, so those are not tuning knobs.
 
-# stage 4.9: the collision-aware policy. Chosen over 5500/5999 on the 4.8 box (50 mm / 5 deg
-# coverage 73.3% against 66.7% and 63.3%) while matching them on collisions -- measured in
-# MuJoCo, zero contact with the lidar, the chassis camera or the chassis in every low-target
-# scenario, against 51-93% for the 4.8 policy on the same model.
-# Previous deployments, kept for comparison:
+# stage 4.10: the forward-pointing default (tool along base +X, D455 on top of the AG95 at
+# 0.88 m). Chosen over the 4500/5000/5500 checkpoints on the 4.10 command box: 50 mm / 5 deg
+# coverage 65.0% against 43.3% / 48.3% / 53.3%, and the best position median (32 mm).
+# Earlier deployments, kept for comparison:
+#   2026-11-02_19-28-51_stage49a_ppo/model_5000.pt   (4.9, old default pose)
 #   2026-11-02_00-30-47_stage48a_ppo/model_5999.pt   (4.8, no safety term)
 #   2026-10-31_23-09-08_stage47c_ppo/model_2999.pt   (4.7)
-policy_path: "{CURRENT_ROOT_DIR}/logs/rsl_rl/ranger_cr10_teleop/2026-11-02_19-28-51_stage49a_ppo/model_5000.pt"
+policy_path: "{CURRENT_ROOT_DIR}/logs/rsl_rl/ranger_cr10_teleop/2026-11-03_16-30-44_stage410d_ppo/model_5999.pt"
 scene_path: "{CURRENT_ROOT_DIR}/mujoco/robots/ranger_cr10/scene.xml"
 
 # Isaac: sim.dt = 0.005, decimation = 20 -> the policy runs at 10 Hz.

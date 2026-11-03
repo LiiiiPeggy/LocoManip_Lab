@@ -435,6 +435,23 @@ Artifacts (each verified by loading/playing it back, not by exit code):
    zeroing the actor's 8-D output layer breaks that basin (0.29 m / 0.74 rad within 100
    iterations) and is the starting point for the retrain.
 
+   **Stage 4.10 training (2026-11-04) converged in 6000 iterations (8.97 h).** Started from
+   4.9's `model_5000` hidden layers with the 8-D output layer **zeroed** -- fine-tuning from
+   4.9 directly stalls in the "pull the arm back to the old pose" basin (0.34 m / 2.25 rad
+   after 525 iterations, KL -> 0), while the zeroed readout reaches 0.29 m / 0.74 rad in 100.
+   Final: EE position **0.056 m**, orientation **0.141 rad**, success **90.4%**, collision
+   proxy **0.24%**; value 8.26 -> 1.65, entropy +0.55 -> -3.77, std 0.28 -> 0.168. Deployed
+   checkpoint `stage410d_ppo/model_5999` (chosen over 4500/5000/5500 on 50 mm/5 deg coverage:
+   65.0% against 43.3/48.3/53.3). On the 4.10 command box: 65.0% at 50 mm/5 deg (69.6% over
+   collision-free-reachable targets), position median 32 mm, orientation 3.7 deg. **All eleven
+   low-target collision scenarios are at 0% contact** with 10-19 mm clearance -- the gripper
+   through the lidar is gone. New residual: arm self-collision `Link3 <-> Link5` on **11% of
+   the steps** of random six-dimensional targets (4.9 had 3%, `Link3 <-> d455`), because the
+   new default folds the wrist more; the relative 20 mm margin in the safety term is too weak
+   for that fold and is the next thing to fix. The position-dependent Z floor is now actually
+   used: per column the tool reaches -0.10/-0.15/-0.40 m on the far side and stops at 0.00
+   directly above the lidar, against 4.9's single -0.05 everywhere.
+
    **Stage 4.9 (2026-11-02) gave the robot collision geometry and taught the policy to respect it.**
    The user saw the arm pass through the lidar and the chassis camera in MuJoCo; the reason was
    structural -- only the chassis, the steering forks, the wheels and the six arm links carried

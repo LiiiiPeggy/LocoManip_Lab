@@ -104,6 +104,7 @@ ap.add_argument("--out", default="outputs/stage49")
 ap.add_argument("--random_targets", type=int, default=60)
 ap.add_argument("--hold", type=int, default=30, help="policy steps held per target")
 ap.add_argument("--seed", type=int, default=5)
+ap.add_argument("--box", choices=("4.8", "4.10"), default="4.10", help="which command box the random targets come from")
 ap.add_argument("--viewer", action="store_true", help="show the collision geometry live")
 args = ap.parse_args()
 
@@ -374,7 +375,7 @@ def joint_slack_of(sim) -> float:
 
 def policy_scenarios(sim) -> dict:
     ws = teleop.WS
-    box = ws.TARGET_BOX_48
+    box = ws.TARGET_BOX_410 if args.box == "4.10" else ws.TARGET_BOX_48
     print()
     print("=" * 100)
     print("3. 策略场景 (低位目标 / 低位组合 / 低位姿态 / 连续键盘 / 随机六维)")
@@ -450,10 +451,10 @@ def policy_scenarios(sim) -> dict:
         )
     seq = [teleop.ee_command_from_offset(d, r) for d, r in targets]
     policy_scenarios.targets = targets
-    r = run_scenario(sim, "随机六维 (4.8 盒)", seq, steps_each=args.hold)
-    scen["随机六维 (4.8 盒)"] = r
+    r = run_scenario(sim, f"随机六维 ({args.box} 盒)", seq, steps_each=args.hold)
+    scen[f"随机六维 ({args.box} 盒)"] = r
     print(
-        f"  {'随机六维 (4.8 盒)':<26}{r['contact_rate'] * 100:>8.0f}%{r['min_clearance'] * 1000:>9.0f}mm"
+        f"  {f'随机六维 ({args.box} 盒)':<26}{r['contact_rate'] * 100:>8.0f}%{r['min_clearance'] * 1000:>9.0f}mm"
         f"{r['min_visual_clearance'] * 1000:>9.0f}mm{r['ee_err_median'] * 1000:>8.0f}mm"
         f"{r['ori_err_median']:>9.1f}°   {r['pairs']}"
     )
