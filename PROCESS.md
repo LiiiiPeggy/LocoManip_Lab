@@ -169,3 +169,60 @@ comparison/rebasing is no longer possible in this clone.
 
 Whether the other six platforms should be dropped outright or restored (e.g. Git LFS) is undecided.
 Tracked in [PROGRESS.md](PROGRESS.md) → Next steps.
+
+## 4. Stage 4.10: why the default pose moved forward, and why the retrain had to start from a zeroed output layer
+
+Recorded because the numbers that decided it are not visible from the code.
+
+### The requirement arrived as a pose, and the pose did not exist where it was asked for
+
+The task was "tool along `base_link` +X, D455 at 0.88 m, camera on top". Two measurements
+reordered the work:
+
+* the tool's default approach axis is the **TCP +z**, and at the old default it pointed *down*
+  (`(0.234, -0.046, -0.971)` in the base frame). "Point forward" is therefore a ~77 deg change, not
+  `rpy = 0`;
+* with the tool horizontal at a fixed 0.473 m, the arm can only hold the pose **extended**. IK has
+  no solution at the old TCP x = 0.55 m (10 cm of position error with the attitude already met);
+  the smallest workable position is x ~= 0.74, and 0.80 was chosen because it had the largest
+  motion envelope of the candidates (X -0.10/+0.44, Y -0.44/+0.08, Z +-0.44).
+
+That position change is not cosmetic: the command box is expressed *relative* to the default, so
+its X and Y ranges were re-trimmed (`-0.15..+0.40`, `-0.40..+0.10`) to what the new posture can
+cover. It also moved the TCP in front of the lidar, which is why the position-dependent Z floor
+suddenly had room to open up (`safe_z_table.json`: 96% of columns below the old flat -0.05).
+
+### Rolling `cr10_joint6` was tried and rejected on measurement
+
+First implementation put the camera on top by rotating the wrist -142.3 deg. It works, but: the
+camera ends up *above* while its housing is rolled 142 deg (the image is tilted), the joint is left
+with 0.66 rad of travel, and 180 deg is not even reachable (the joint limit is +-3.14 rad, so
++-179.9 deg). The camera is also 94 mm off the tool axis, so "camera up" is a 142 deg roll, not 180.
+The mount was changed in the URDF instead, `cr10_joint6` went back to 0, and the USD was
+regenerated from the edited URDF -- the one place where a "fixed" joint is still a number worth
+getting right.
+
+### The retrain, and the failure that made it work
+
+Changing the default joint pose invalidates any policy trained on the old one: the action is
+`q_target = default + 0.25 * a` and the observation contains raw joint positions, so the 4.9 policy
+went to 885 mm / 134 deg. The first attempt -- a plain fine-tune from the 4.9 checkpoint -- looked
+like a learning-rate problem for an hour: position error fell 0.55 -> 0.35 and then flattened,
+surrogate loss went to zero, measured KL to zero. It was not a learning-rate problem. The policy was
+holding the *old* posture and treating the new one as an error to correct.
+
+Zeroing the last (8-D) layer of the actor -- keeping every hidden layer, changing nothing else --
+removed that bias: the policy initialises holding the new default, and the advantage signal is then
+about tracking rather than about undoing the pose. 100 iterations later it was at 0.29 m / 0.74 rad,
+and 6000 iterations later at 0.056 m / 0.141 rad. This is recorded as an *initialisation* trick, not
+supervision: no IK target, no auxiliary loss, the 8-D action and 117-D observation are untouched.
+
+### What the run did not fix, and why more iterations would not
+
+The end-of-run MuJoCo evaluation found 11% of the steps of random six-dimensional targets in
+`cr10_Link3 <-> cr10_Link5` contact, while the reward's own collision metric reported 0.24% on the
+same box. The proxy is not wrong in the direction it was validated for (it never *misses* a chassis
+contact), but spheres along a link's axis do not cover the flat faces that graze past each other, so
+this class of self-contact is invisible to the training signal. Extending the run to 10 000
+iterations would improve tracking; it would not remove that contact. Fixing it needs a box-to-box
+distance (or a finer sphere set for those pairs) and therefore a separate training run.

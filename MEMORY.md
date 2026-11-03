@@ -254,3 +254,32 @@ change without the guard, 0.0% with it.
   offsets folded in -- looking up `lidar_link0` by name works in MuJoCo and raises in Isaac.
   With `enabled_self_collisions=False` (every stage before 4.9) the folded-in geometry still
   never generates a contact, so the policy could not be taught to avoid it.
+- **The "converted" URDF is generated from the vendor description URDF, and only one of them is
+  tracked by the build (2026-11-04).** Stage 4.10 moves the D455 to a top mount and the change had
+  to be made in *both* `rangerboxcr10lidar_description/urdf/rangercr10lidar.urdf` (the source) and
+  `assets/ranger_cr10/ranger_cr10_converted.urdf` (what `build_mjcf.py` and `convert_ranger_cr10.py`
+  actually read). Editing only the converted one works until the next regeneration, which silently
+  restores the old geometry. `scripts/ranger_cr10/check_pose_sync.py` now asserts the two agree.
+- **MuJoCo cameras look along their local -z (2026-11-04).** A `<camera>` placed at the D455's
+  optical frame rendered the robot's own gripper until the quaternion was composed with a 180 deg
+  roll about x: the optical frame's +z is the viewing direction, which is the *opposite* of what
+  MuJoCo wants. Two related traps: a camera at the centre of a 12 cm camera mesh renders the inside
+  of its own housing (offset past the front face), and `d.cam_xmat` is the camera frame, so its
+  third column points *backwards*.
+- **Changing the arm's default joint pose makes the trained policy unusable, and the obvious
+  fine-tune does not recover (2026-11-04).** The action is `q_target = default + 0.25 * a`, and the
+  observation contains the raw joint positions, so moving the default from
+  `[0.6, 1.0, -2.4, 0, 1.4, 0]` to the forward-pointing pose sent the 4.9 policy to 885 mm / 134 deg
+  error. Fine-tuning it from the trained actor stalls at 0.34 m / 2.25 rad for 500+ iterations with
+  KL collapsing to 0 -- the policy keeps driving the arm back to the posture it knows. Zeroing only
+  the 8-D *output* layer (keeping the hidden layers) breaks that basin: 0.29 m / 0.74 rad within 100
+  iterations, and 0.056 m / 0.141 rad after 6000. Any future change to the default pose should
+  expect to retrain this way, not to "warm start".
+- **The sphere clearance proxy does not see shallow face-to-face grazing (2026-11-04).** It was
+  validated against MuJoCo's convex hulls as *conservative* (94% of samples, 0% missed at the 20 mm
+  criterion), yet at the end of the 4.10 run it reported 0.24% collision while MuJoCo's exact
+  geometry reported 11% of the steps of the same random-target set in contact -- all of them
+  `cr10_Link3 <-> cr10_Link5`, two long flat links sliding past each other. Spheres placed along a
+  link's axis cover its edges but not the flat faces that graze across the gap between two sphere
+  centres, so anything inside that residual should be measured with MuJoCo, not with the proxy the
+  reward uses.
