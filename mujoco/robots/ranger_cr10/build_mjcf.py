@@ -58,7 +58,7 @@ URDF = ROOT / "source/LeggedManip_Lab/LeggedManip_Lab/assets/ranger_cr10/ranger_
 
 # -- values from ranger_cr10_articulation_cfg.py ---------------------------------------
 BASE_HEIGHT = 0.4071
-ARM_DEFAULT = (0.6, 1.0, -2.4, 0.0, 1.4, 0.0)
+ARM_DEFAULT = (0.236, 0.086, -2.398, -0.830, -1.335, 0.0)
 STEERING = {"kp": 300.0, "kv": 30.0, "effort": 100.0, "armature": 0.5, "friction": 0.02}
 WHEEL = {"kv": 60.0, "effort": 150.0, "armature": 0.05, "friction": 0.02, "vmax": 20.0}
 ARM = {
@@ -368,6 +368,14 @@ def build(links, joints, children):
             emit_link_inertial(w, links[child], indent + 2)
             if child == TCP_BODY:
                 w(f'{pad}  <site name="tcp" pos="{fmt(TCP_OFFSET)}" size="0.01"/>')
+            if child == "d455_link":
+                # stage 4.10: the wrist camera's own view. MuJoCo cameras look along **-z**,
+                # so the quaternion is the depth-optical frame (rpy -90,0,-90 from the link)
+                # composed with a 180 deg roll about its x -- without that the "camera" faces
+                # backwards and renders the gripper. The 9 cm offset is a render convenience:
+                # the camera body's own mesh is 12.4 cm long and a camera placed at its centre
+                # renders the inside of its own housing.
+                w(f'{pad}  <camera name="d455" pos="0.09 0 0" quat="{fmt((0.5, 0.5, -0.5, -0.5))}"/>')
             walk(child, indent + 2)
             w(f"{pad}</body>")
 

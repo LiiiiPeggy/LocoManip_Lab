@@ -695,6 +695,97 @@ def coverage_suite(sim: Sim, out: Path, n: int = 60, hold: int = 30, seed: int =
     )
 
 
+def lowspace_suite(
+    sim: Sim, out: Path, hold: int = 20, step: float = 0.05, floor: float = -0.40, pos_tol=0.05, ori_tol=5.0
+):
+    """Stage 4.10 D2: how far down can the tool actually be driven, per (x, y) column?
+
+    Stage 4.9 shipped one number for the whole box (Z >= -0.05) because the lidar sits under
+    the default pose. With the tool out in front the answer depends on where it is, so this
+    walks each column downwards and records the lowest offset the *policy* still holds within
+    50 mm / 5 deg without touching anything -- the same criterion the keyboard uses.
+    """
+    ws = WS
+    box = ws.TARGET_BOX_410
+    xs = np.linspace(box["pos_x"][0] * 0.5, box["pos_x"][1] * 0.6, 3)
+    ys = np.linspace(box["pos_y"][0] * 0.6, box["pos_y"][1] * 0.6, 3)
+    zero = (0.0, 0.0, 0.0)
+    print()
+    print("=" * 100)
+    print(
+        f"lowspace suite (每列从默认高度向下走 {step * 100:.0f} cm, 每档保持 {hold} 步; "
+        f"判据 {pos_tol * 1000:.0f} mm / {ori_tol:.0f}°)"
+    )
+    print("=" * 100)
+    print(f"  {'x':>6}{'y':>7}{'最低可用 z':>12}{'该点误差':>16}{'最小间距':>10}{'碰撞':>6}")
+    rows = []
+    for y in ys:
+        for x in xs:
+            sim.reset()
+            best, last, gap, hit = 0.0, (0.0, 0.0), 1.0, 0
+            z = 0.0
+            while z >= floor - 1e-9:
+                sim.set_commands(0.0, 0.0, ee_command_from_offset((x, y, z), zero))
+                rows_step = [sim.step() for _ in range(hold)]
+                pe = float(np.mean([r["ee_pos"] for r in rows_step[-5:]]))
+                oe = math.degrees(float(np.mean([r["ee_ori"] for r in rows_step[-5:]])))
+                gap = min(gap, _clearance_coll(sim))
+                hit += _has_internal_contact(sim)
+                if pe <= pos_tol and oe <= ori_tol:
+                    best, last = z, (pe, oe)
+                z -= step
+            print(
+                f"  {x:+.2f}{y:+.2f}{best:+.2f} m{last[0] * 1000:>8.0f} mm{last[1]:>6.1f}°{gap * 1000:>8.0f} mm{hit:>6}"
+            )
+            rows.append(
+                dict(x=float(x), y=float(y), z_min=best, err_pos=last[0], err_ori=last[1], clearance=gap, contacts=hit)
+            )
+    return rows
+
+
+def _collision_geoms(sim):
+    m = sim.m
+    key = "_coll_geoms_sets"
+    if not hasattr(sim, key):
+        prot = {mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, n) for n in ("lidar_link0", "d435_link", "base_link")}
+        arm = {
+            mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, n)
+            for n in (
+                "cr10_Link1",
+                "cr10_Link2",
+                "cr10_Link3",
+                "cr10_Link4",
+                "cr10_Link5",
+                "cr10_Link6",
+                "gripper_base_link",
+                "d455_link",
+            )
+        }
+        a = [g for g in range(m.ngeom) if m.geom_bodyid[g] in arm and m.geom_contype[g]]
+        p = [g for g in range(m.ngeom) if m.geom_bodyid[g] in prot and m.geom_contype[g]]
+        setattr(sim, key, (a, p))
+    return getattr(sim, key)
+
+
+def _clearance_coll(sim, cap=0.30):
+    a, p = _collision_geoms(sim)
+    best = cap
+    for g1 in a:
+        for g2 in p:
+            dv = mujoco.mj_geomDistance(sim.m, sim.d, g1, g2, best, None)
+            if dv < best:
+                best = dv
+    return best
+
+
+def _has_internal_contact(sim) -> int:
+    m, d = sim.m, sim.d
+    for c in range(d.ncon):
+        if m.geom_bodyid[d.contact[c].geom1] and m.geom_bodyid[d.contact[c].geom2]:
+            return 1
+    return 0
+
+
 def path_suite(sim: Sim, out: Path, pos_rate: float = 0.10, ori_every: int = 3, hold: int = 20, scan_box: str = "4.8"):
     """E3 (stage 4.8): move the target *continuously*, the way a keyboard does.
 
@@ -881,7 +972,7 @@ def main() -> None:
     ap.add_argument(
         "--suite",
         default="all",
-        choices=["drift", "modes", "convergence", "terrain", "workspace", "coverage", "path", "all"],
+        choices=["drift", "modes", "convergence", "terrain", "workspace", "coverage", "path", "lowspace", "all"],
     )
     ap.add_argument("--out", default="outputs/stage46_mujoco")
     ap.add_argument(
@@ -928,6 +1019,8 @@ def main() -> None:
         payload["coverage"] = coverage_suite(sim, out, box_name=args.coverage_box)
     if args.suite in ("path", "all"):
         payload["path"] = path_suite(sim, out, scan_box=args.scan_box)
+    if args.suite in ("lowspace", "all"):
+        payload["lowspace"] = lowspace_suite(sim, out)
 
     suffix = f"_{args.tag}" if args.tag else ""
     (out / f"mujoco_{args.suite}{suffix}.json").write_text(json.dumps(payload, indent=1))

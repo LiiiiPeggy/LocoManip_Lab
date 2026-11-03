@@ -71,12 +71,13 @@ REPO = Path(__file__).resolve().parents[2]
 URDF = REPO / "source/LeggedManip_Lab/LeggedManip_Lab/assets/ranger_cr10/ranger_cr10_converted.urdf"
 
 JOINT_NAMES = [f"cr10_joint{i}" for i in range(1, 7)]
-DEFAULT_Q = np.array([0.6, 1.0, -2.4, 0.0, 1.4, 0.0])
+DEFAULT_Q = np.array([0.511, 0.494, -2.449, -1.186, -1.060, 0.0])
 # the virtual TCP offset from mdp/tcp.py; section 2 re-measures it from the simulator
 TCP_OFFSET_POS = np.array([0.0, 0.00003, 0.14389])
 # the simulator's limits, which is what the policy is trained against
-LIMITS = np.array([[-3.920, 0.940], [-1.570, 1.570], [-2.860, 2.860],
-                   [-3.140, 3.140], [-3.140, 3.140], [-3.140, 3.140]])
+LIMITS = np.array(
+    [[-3.920, 0.940], [-1.570, 1.570], [-2.860, 2.860], [-3.140, 3.140], [-3.140, 3.140], [-3.140, 3.140]]
+)
 # the trained EE box: `ranges` in teleop_env_cfg.py, and the keyboard's limits by design
 TRAIN_BOX_RPY = ((-0.40, 0.40), (-0.40, 0.40), (-0.50, 0.50))
 TRAIN_BOX_POS = ((-0.12, 0.12), (-0.15, 0.15), (-0.12, 0.10))
@@ -87,11 +88,13 @@ def rpy_matrix(r, p, y):
     cr, sr = math.cos(r), math.sin(r)
     cp, sp = math.cos(p), math.sin(p)
     cy, sy = math.cos(y), math.sin(y)
-    return np.array([
-        [cy * cp, cy * sp * sr - sy * cr, cy * sp * cr + sy * sr],
-        [sy * cp, sy * sp * sr + cy * cr, sy * sp * cr - cy * sr],
-        [-sp, cp * sr, cp * cr],
-    ])
+    return np.array(
+        [
+            [cy * cp, cy * sp * sr - sy * cr, cy * sp * cr + sy * sr],
+            [sy * cp, sy * sp * sr + cy * cr, sy * sp * cr - cy * sr],
+            [-sp, cp * sr, cp * cr],
+        ]
+    )
 
 
 def axis_matrix(axis, ang):
@@ -187,8 +190,10 @@ print(f"  中性 TCP 位置  {np.round(P_NEUTRAL, 5)}  |p| = {np.linalg.norm(P_N
 print(f"  中性 TCP 姿态  rpy(deg) = {np.round(np.degrees(R_to_rpy(R_NEUTRAL)), 2)}")
 print("  工具轴与机身轴的夹角 (0° = 对齐, 180° = 反向):")
 for i, nm in enumerate("xyz"):
-    print(f"    {nm}: {math.degrees(math.acos(max(-1.0, min(1.0, R_NEUTRAL[i, i])))):6.1f}°"
-          f"   工具 {nm} 轴指向 {np.round(R_NEUTRAL[:, i], 4)}")
+    print(
+        f"    {nm}: {math.degrees(math.acos(max(-1.0, min(1.0, R_NEUTRAL[i, i])))):6.1f}°"
+        f"   工具 {nm} 轴指向 {np.round(R_NEUTRAL[:, i], 4)}"
+    )
 print("  -> 三个都不接近 0°, 所以'绕机身轴 roll/pitch/yaw'对腕部不是小扰动")
 
 # ------------------------------------------------------------------ 2. cross-check ------
@@ -201,15 +206,13 @@ from isaaclab.app import AppLauncher  # noqa: E402
 app = AppLauncher(headless=True).app
 
 import gymnasium as gym  # noqa: E402
-import torch  # noqa: E402
-
 import LeggedManip_Lab.tasks  # noqa: E402,F401
+import torch  # noqa: E402
 from LeggedManip_Lab.assets.ranger_cr10.ranger_cr10_articulation_cfg import ARM_JOINT_NAMES  # noqa: E402
 from LeggedManip_Lab.tasks.manager_based.leggedmanip_lab.config.ranger_cr10.teleop_env_cfg import (  # noqa: E402
     RangerCr10TeleopEnvCfg,
 )
 from LeggedManip_Lab.tasks.manager_based.leggedmanip_lab.mdp.tcp import tcp_pose_b  # noqa: E402
-from isaaclab.utils.math import subtract_frame_transforms  # noqa: E402
 from scipy.spatial.transform import Rotation  # noqa: E402
 
 cfg = RangerCr10TeleopEnvCfg()
@@ -229,13 +232,17 @@ rng = np.random.default_rng(args_cli.seed)
 worst_p = worst_r = 0.0
 consts = []
 print(f"  {'case':<12}{'TCP 位置差':>14}{'TCP 姿态差':>14}")
-for label, q in [("default", DEFAULT_Q)] + [
-        (f"perturb {i}", DEFAULT_Q + rng.uniform(-0.8, 0.8, size=6)) for i in range(5)] + [
-        ("random", rng.uniform(LIMITS[:, 0], LIMITS[:, 1]))]:
+for label, q in (
+    [("default", DEFAULT_Q)]
+    + [(f"perturb {i}", DEFAULT_Q + rng.uniform(-0.8, 0.8, size=6)) for i in range(5)]
+    + [("random", rng.uniform(LIMITS[:, 0], LIMITS[:, 1]))]
+):
     q = np.clip(q, LIMITS[:, 0], LIMITS[:, 1])
     robot.write_joint_state_to_sim(
         torch.tensor(q, dtype=torch.float32, device=robot.device).unsqueeze(0).expand(robot.num_instances, -1),
-        torch.zeros(robot.num_instances, 6, device=robot.device), joint_ids=arm_ids)
+        torch.zeros(robot.num_instances, 6, device=robot.device),
+        joint_ids=arm_ids,
+    )
     sim.step()
     q_read = robot.data.joint_pos[0, arm_ids].cpu().numpy()
     tp, tq = tcp_pose_b(robot, link6_id, base_id)
@@ -249,8 +256,7 @@ for label, q in [("default", DEFAULT_Q)] + [
     worst_p, worst_r = max(worst_p, dp), max(worst_r, dr)
     print(f"  {label:<12}{dp:>14.2e}{dr:>14.2e}")
 spread = max(float(np.linalg.norm(c[:3, 3] - consts[0][:3, 3])) for c in consts)
-print(f"  最大残差 {worst_p:.2e} m / {worst_r:.2e} rad; "
-      f"链末端->TCP 常量在位形间散布 {spread:.2e} m")
+print(f"  最大残差 {worst_p:.2e} m / {worst_r:.2e} rad; 链末端->TCP 常量在位形间散布 {spread:.2e} m")
 print(f"  -> {'解析链可用' if worst_p < 1e-3 and worst_r < 1e-3 else '**不可用**'}")
 # NOTE: env.close()/app.close() are deliberately NOT called here. app.close() tears the
 # process down from native code, so everything below -- which needs no simulator -- would be
@@ -276,8 +282,7 @@ def ik(target_p, target_R, q_init, iters, lam=0.03, step_cap=0.2, rot_weight=1.0
     best = (1e9, 1e9, q.copy())
     for _ in range(iters):
         T = fk(q)
-        e = np.concatenate([pos_weight * (target_p - T[:3, 3]),
-                            rot_weight * log_R(target_R @ T[:3, :3].T)])
+        e = np.concatenate([pos_weight * (target_p - T[:3, 3]), rot_weight * log_R(target_R @ T[:3, :3].T)])
         err = (float(np.linalg.norm(target_p - T[:3, 3])), float(np.linalg.norm(log_R(target_R @ T[:3, :3].T))))
         if err[0] + err[1] < best[0] + best[1]:
             best = (err[0], err[1], q.copy())
@@ -292,8 +297,9 @@ def ik(target_p, target_R, q_init, iters, lam=0.03, step_cap=0.2, rot_weight=1.0
     return best
 
 
-GUESSES = [DEFAULT_Q, np.clip(DEFAULT_Q + 0.4, *LIMITS.T), np.clip(DEFAULT_Q - 0.4, *LIMITS.T),
-           np.zeros(6)] + [rng.uniform(LIMITS[:, 0], LIMITS[:, 1]) for _ in range(args_cli.restarts)]
+GUESSES = [DEFAULT_Q, np.clip(DEFAULT_Q + 0.4, *LIMITS.T), np.clip(DEFAULT_Q - 0.4, *LIMITS.T), np.zeros(6)] + [
+    rng.uniform(LIMITS[:, 0], LIMITS[:, 1]) for _ in range(args_cli.restarts)
+]
 
 
 def solve(tp, tR, **kw):
@@ -321,13 +327,14 @@ for mag in (0.025, 0.05, 0.1, 0.15, 0.2):
 for off in [(0.12, 0.0, 0.0), (0.0, -0.15, 0.0), (0.0, 0.0, 0.10)]:
     TARGETS.append((f"纯位置 {off}, 姿态不变", (0.0, 0.0, 0.0), off))
 
-for mode, mode_name in (("chassis", "机身轴 ΔR_B·R_NE  —— 代码当前实现"),
-                        ("tool", "工具轴 R_NE·ΔR_E")):
+for mode, mode_name in (("chassis", "机身轴 ΔR_B·R_NE  —— 代码当前实现"), ("tool", "工具轴 R_NE·ΔR_E")):
     print("\n" + "=" * 86)
     print(f"4. IK 可达性 — {mode_name}")
     print("=" * 86)
-    print(f"  {'目标':<26}{'位置残差':>10}{'姿态残差':>10}{'关节余量':>9}"
-          f"{'|Δq| 离默认':>12}{'max|Δq|':>9}{'最小奇异值':>11}")
+    print(
+        f"  {'目标':<26}{'位置残差':>10}{'姿态残差':>10}{'关节余量':>9}"
+        f"{'|Δq| 离默认':>12}{'max|Δq|':>9}{'最小奇异值':>11}"
+    )
     n_ok = 0
     for label, rpy, off in TARGETS:
         ep, er, q, slack = solve(P_NEUTRAL + np.asarray(off), command_R(rpy, mode))
@@ -337,8 +344,10 @@ for mode, mode_name in (("chassis", "机身轴 ΔR_B·R_NE  —— 代码当前�
         # the smallest singular value at the solution: an arm resting against a singularity
         # is a different failure from an arm that simply has not been asked properly
         sv_min = float(np.linalg.svd(jacobian(q), compute_uv=False)[-1])
-        print(f"  {label:<26}{ep:>10.2e}{er:>10.4f}{math.degrees(slack):>8.1f}°"
-              f"{np.linalg.norm(dq):>12.3f}{np.abs(dq).max():>9.3f}{sv_min:>11.4f}")
+        print(
+            f"  {label:<26}{ep:>10.2e}{er:>10.4f}{math.degrees(slack):>8.1f}°"
+            f"{np.linalg.norm(dq):>12.3f}{np.abs(dq).max():>9.3f}{sv_min:>11.4f}"
+        )
     print(f"  -> {n_ok}/{len(TARGETS)} 可达 (位置 <2 mm 且姿态 <0.02 rad)")
     print("  |Δq| 是 IK 解相对默认关节姿态的关节空间距离 —— 若很大, '保持默认姿态不动'")
     print("  就是一个代价很低、而 PPO 很难自己走出来的局部最优")
@@ -358,8 +367,10 @@ for rpy in corners:
     ep, er, q, slack = solve(P_NEUTRAL, command_R(rpy, "chassis"))
     ok = ep < 2e-3 and er < 0.02
     n_ok += ok
-    print(f"  {str(tuple(round(v, 2) for v in rpy)):<30}{ep:>11.2e}{er:>11.4f}"
-          f"{'可达' if ok else ('勉强' if er < 0.1 else '不可达'):>8}")
+    print(
+        f"  {str(tuple(round(v, 2) for v in rpy)):<30}{ep:>11.2e}{er:>11.4f}"
+        f"{'可达' if ok else ('勉强' if er < 0.1 else '不可达'):>8}"
+    )
 print(f"  -> {n_ok}/8 个角点可达")
 
 print("\n" + "=" * 86)
@@ -368,8 +379,10 @@ print("=" * 86)
 for c in (0.025, 0.1, 0.2):
     a, e = 1.1 * c, c
     ct = (c * c + a * a - e * e) / (2 * c * a)
-    print(f"  指令 {c:.3f} rad, 实测 {a:.3f} rad, 残余 {e:.3f} rad"
-          f"  -> 实测轴与指令轴夹角 {math.degrees(math.acos(max(-1, min(1, ct)))):.1f}°")
+    print(
+        f"  指令 {c:.3f} rad, 实测 {a:.3f} rad, 残余 {e:.3f} rad"
+        f"  -> 实测轴与指令轴夹角 {math.degrees(math.acos(max(-1, min(1, ct)))):.1f}°"
+    )
 
 env.close()
 app.close()

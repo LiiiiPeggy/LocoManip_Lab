@@ -76,8 +76,8 @@ if TYPE_CHECKING:
 # ``cr10_joint1..6 = 0.6, 1.0, -2.4, 0.0, 1.4, 0.0`` rad, read back through ``tcp_pose_b``.
 # Re-verify with ``scripts/ranger_cr10/check_teleop_env.py`` after any change to the arm's
 # default joint positions or to ``TCP_OFFSET_POS``.
-TCP_DEFAULT_POS_B = (0.5519, -0.0742, 0.4696)
-TCP_DEFAULT_QUAT_B = (0.032072, -0.875128, 0.469424, -0.112978)
+TCP_DEFAULT_POS_B = (0.8998, -0.0999, 0.3727)
+TCP_DEFAULT_QUAT_B = (0.499873, 0.500027, 0.500173, 0.499927)
 
 
 def _uniform_axes(n: int, ranges, device) -> torch.Tensor:

@@ -49,13 +49,13 @@ STEERING_JOINT_NAMES = [
     "rr_steering_wheel_joint",
 ]
 WHEEL_JOINT_NAMES = ["fr_wheel_joint", "fl_wheel_joint", "rl_wheel_joint", "rr_wheel_joint"]
-ARM_DEFAULT = np.array([0.6, 1.0, -2.4, 0.0, 1.4, 0.0], dtype=np.float64)
+ARM_DEFAULT = np.array([0.236, 0.086, -2.398, -0.830, -1.335, 0.0], dtype=np.float64)
 
 # -- from TCPBodyPoseCommand (pose_command_teleop.py / tcp.py) ---------------------------
 TCP_BODY = "cr10_Link6"
 TCP_OFFSET_POS = (0.0, 0.00003, 0.14389)
-TCP_DEFAULT_POS_B = np.array([0.5519, -0.0742, 0.4696])
-TCP_DEFAULT_QUAT_B = np.array([0.032072, -0.875128, 0.469424, -0.112978])
+TCP_DEFAULT_POS_B = np.array([0.8998, -0.0999, 0.3727])
+TCP_DEFAULT_QUAT_B = np.array([0.499873, 0.500027, 0.500173, 0.499927])
 
 # -- from the env cfg ---------------------------------------------------------------------
 ACTION_SCALE = 0.25  # JointPositionActionCfg(scale=0.25, use_default_offset=True)

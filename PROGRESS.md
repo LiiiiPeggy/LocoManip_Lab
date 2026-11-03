@@ -413,6 +413,28 @@ Artifacts (each verified by loading/playing it back, not by exit code):
    convergence commands' median orientation went 0.81 -> 1.28 deg, concentrated in negative pitch
    (B5: 0.37 -> 3.33 deg); the mechanism was not isolated by ablation and is the next thing to test.
 
+   **Stage 4.10 (2026-11-03) points the tool forward and puts the camera on top of the gripper.**
+   The default pose now has the tool (TCP +z) along base +X, the D455 mounted **on top of the
+   AG95** rather than on its side, and the whole arm extended forward so the receiver sits at
+   the front of the chassis. Three things had to be fixed on the way: (a) the tool's default
+   orientation was pointing *down*, not forward, so "point forward" is a 77 deg change and not
+   `rpy = 0`; (b) with the tool horizontal the arm can only hold the pose extended (x = 0.80 m,
+   no solution at the old 0.55), which moves the command box forward -- trimmed to
+   X -0.15..+0.40, Y -0.40..+0.10; (c) rolling `cr10_joint6` by -142 deg put the camera above
+   but tilted the image and left 0.66 rad of joint travel, so the mount itself was changed in
+   the URDF (`d455_joint` origin (0, 0.10, 0.14) rpy (45, -90, -135) deg), the USD regenerated
+   from it, and **q6 returned to 0**. Final pose `[0.236, 0.086, -2.398, -0.830, -1.335, 0]`:
+   D455 centre **0.880 m** above ground (Isaac 0.872 settled), optical axis **0.03 deg** from
+   base +X (Isaac 0.87), image-up **0.02 deg** from world +Z (Isaac 0.91), camera 100 mm
+   straight above the TCP, TCP 0.780 m, joint slack 0.46 rad, zero internal contacts, and 5 s
+   of zero command moves the tool 1.4 mm. The position-dependent Z floor was re-measured for
+   the new geometry: **96% of the (x, y) columns can now go below the old -0.05**, the three
+   far columns are unrestricted to -0.40, and only the columns next to the lidar keep
+   -0.04..-0.08. The 4.9 policy is **not** compatible with the new pose (650 mm / 136 deg error
+   at it), and a fine-tune from it does not recover (stalled at 0.34 m / 2.25 rad, KL -> 0);
+   zeroing the actor's 8-D output layer breaks that basin (0.29 m / 0.74 rad within 100
+   iterations) and is the starting point for the retrain.
+
    **Stage 4.9 (2026-11-02) gave the robot collision geometry and taught the policy to respect it.**
    The user saw the arm pass through the lidar and the chassis camera in MuJoCo; the reason was
    structural -- only the chassis, the steering forks, the wheels and the six arm links carried

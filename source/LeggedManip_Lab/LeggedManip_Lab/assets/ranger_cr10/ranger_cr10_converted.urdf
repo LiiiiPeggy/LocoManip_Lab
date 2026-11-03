@@ -557,14 +557,20 @@
     <color rgba="0.5 0.5 0.5 1" />
   </material>
   <joint name="d455_joint" type="fixed">
-    <origin xyz="-0.01 -0.06 0.03" rpy="0 -1.57 1.57" />
+    <!-- stage 4.10: the D455 is mounted ON TOP of the AG95 instead of on its side. The old
+         side mount left the camera below the tool as soon as the tool was pointed forward, and
+         no wrist roll fixed that without either leaving the joint's usable range or tilting
+         the image. Position/rotation are derived, not eyeballed: this places the camera centre
+         75 mm above the tool axis and 100 mm along it, with the depth-optical +z along the
+         tool axis and the image "up" along world +Z when the tool is horizontal. -->
+    <origin xyz="0.0 0.10 0.14" rpy="0.785398 -1.570796 -2.356194" />
     <parent link="gripper_base_link" />
     <child link="d455_bottom_screw_frame" />
     <axis xyz="0 0 0" />
   </joint>
   <link name="d455_bottom_screw_frame" />
   <joint name="d455_link_joint" type="fixed">
-    <origin xyz="0.01115 0.0475 0.0145" rpy="0 0 0" />
+    <origin xyz="0 0 0" rpy="0 0 0" />
     <parent link="d455_bottom_screw_frame" />
     <child link="d455_link" />
     <axis xyz="0 0 0" />
@@ -922,7 +928,7 @@
                          iyx = "0.000000" iyy = "3.03961e-06" iyz = "2.16427e-13"
                          izx = "0.000000" izy = "0.000000" izz = "1.11815e-06" />
             </inertial>
-        </link> 
+        </link>
   <gazebo reference="gripper_finger1_finger_tip_link">
     <implicitSpringDamper>1</implicitSpringDamper>
     <mu1>100000</mu1>
@@ -948,7 +954,7 @@
                          iyx = "0.000000" iyy = "3.03961e-06" iyz = "2.16427e-13"
                          izx = "0.000000" izy = "0.000000" izz = "1.11815e-06" />
             </inertial>
-        </link> 
+        </link>
   <gazebo reference="gripper_finger2_finger_tip_link">
     <implicitSpringDamper>1</implicitSpringDamper>
     <mu1>100000</mu1>
@@ -956,7 +962,7 @@
     <kp>100000000.0</kp>
     <kd>1.0</kd>
   </gazebo>
-  
+
     <transmission name="gripper_finger1_trans">
     <type>transmission_interface/SimpleTransmission</type>
     <joint name="gripper_finger1_joint">
@@ -990,13 +996,13 @@
     <plugin filename="libroboticsgroup_gazebo_mimic_joint_plugin.so" name="mimic_dh_robotics_ag95_4">
       <joint>gripper_finger1_joint</joint>
       <mimicJoint>gripper_finger1_finger_tip_joint</mimicJoint>
-      <multiplier>1.49462955</multiplier>          
+      <multiplier>1.49462955</multiplier>
       <offset>0.0</offset>
     </plugin>
     <plugin filename="libroboticsgroup_gazebo_mimic_joint_plugin.so" name="mimic_dh_robotics_ag95_5">
       <joint>gripper_finger1_joint</joint>
       <mimicJoint>gripper_finger2_finger_tip_joint</mimicJoint>
-      <multiplier>1.49462955</multiplier>          
+      <multiplier>1.49462955</multiplier>
       <offset>0.0</offset>
     </plugin>
     <plugin filename="libroboticsgroup_gazebo_mimic_joint_plugin.so" name="mimic_dh_robotics_ag95_6">

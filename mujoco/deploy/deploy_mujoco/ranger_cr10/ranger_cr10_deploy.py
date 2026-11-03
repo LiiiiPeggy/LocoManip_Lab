@@ -225,6 +225,10 @@ def build_script(name: str) -> list[tuple[float, str, str]]:
         (9.5, "release", "q"),
         (10.0, "press", "r"),  # reset: velocity to zero, target walks home
         (10.5, "release", "r"),
+        # stage 4.10: go down with the safe-Z table doing the clamping -- at the default
+        # (x, y) the table stops well above the old -0.05, which is the point of the table
+        (12.0, "press", "o"),
+        (15.0, "release", "o"),
     ]
 
 
@@ -406,10 +410,11 @@ def main() -> None:
         lin, ang = obs_builder.base_velocity_local()
         # which axis is pinned at its clamp -- the operator sees "U does nothing" otherwise
         limits = []
+        z_floor, z_reason = kb.z_floor()
         for name, val, lim in (
             ("X", pos_off[0], kb.cfg.pos_limits[0]),
             ("Y", pos_off[1], kb.cfg.pos_limits[1]),
-            ("Z", pos_off[2], kb.cfg.pos_limits[2]),
+            ("Z", pos_off[2], (z_floor, kb.cfg.pos_limits[2][1])),
             ("roll", rpy_off[0], tuple(math.radians(v) for v in kb.cfg.ori_limits_deg[0])),
             ("pitch", rpy_off[1], tuple(math.radians(v) for v in kb.cfg.ori_limits_deg[1])),
             ("yaw", rpy_off[2], tuple(math.radians(v) for v in kb.cfg.ori_limits_deg[2])),
@@ -417,7 +422,8 @@ def main() -> None:
             if abs(val - lim[1]) < 1e-3:
                 limits.append(f"{name}+")
             elif abs(val - lim[0]) < 1e-3:
-                limits.append(f"{name}-")
+                # stage 4.10: say *why* Z stopped, because the bound moves with X/Y
+                limits.append(f"{name}-({z_reason})" if name == "Z" else f"{name}-")
         at_limit = f" | ** 已到限位: {' '.join(limits)} **" if limits else ""
         # stage 4.9: how close the arm is to the lidar / chassis camera / chassis, so the
         # operator can see the safety margin rather than discover it by watching a mesh go

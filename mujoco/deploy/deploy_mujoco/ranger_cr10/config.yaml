@@ -51,9 +51,9 @@ keyboard:
   #   4.7          the box the 4.7 policy was verified to hold
   #   4.8          the box the 4.8 policy was verified to hold
   #   4.8_explore  the unverified candidate box; the status line marks the 探索区
-  #   4.9          re-measured with the collision model complete (default): Z- stops at
-  #                -0.05 because below that the tool is inside the lidar
-  profile: "4.9"
+  #   4.9          re-measured with the collision model complete: Z- stops at -0.05
+  #   4.10         forward-pointing default, Z floor from the measured (x, y) table (default)
+  profile: "4.10"
 
 viewer: true
 status_fps: 5.0

@@ -96,7 +96,7 @@ lim = np.array(
         for i in range(1, 7)
     ]
 )
-HOME = np.array([0.6, 1.0, -2.4, 0.0, 1.4, 0.0])
+HOME = np.array([0.511, 0.494, -2.449, -1.186, -1.060, 0.0])
 
 
 def exact_clearance(cap=0.5):

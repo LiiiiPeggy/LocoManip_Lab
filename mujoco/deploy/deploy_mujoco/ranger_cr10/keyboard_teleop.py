@@ -57,12 +57,15 @@ Key map
 from __future__ import annotations
 
 import importlib.util
+import json
 import math
 import sys
 import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
+
+import numpy as np
 
 
 def _workspace_box():
@@ -80,6 +83,15 @@ def _workspace_box():
             module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)
             return module
+    return None
+
+
+def _load_z_table():
+    """The measured safe-Z table, if it is next to workspace_limits.py."""
+    for parent in Path(__file__).resolve().parents:
+        candidate = parent / "scripts" / "ranger_cr10" / "safe_z_table.json"
+        if candidate.is_file():
+            return json.loads(candidate.read_text())
     return None
 
 
@@ -195,7 +207,7 @@ class KeyboardTeleopConfig:
     its edge.
     """
 
-    profile: str = "4.8"
+    profile: str = "4.10"
     """Which measured workspace the clamps come from (``4.7``, ``4.8``, ``4.8_explore``).
 
     ``4.7`` and ``4.8`` are boxes a policy has been measured to hold. ``4.8_explore`` is the
@@ -228,11 +240,34 @@ class KeyboardTeleopConfig:
 
     def __post_init__(self) -> None:
         """Take the clamps from the selected profile, so a profile switch is one config line."""
+        self._z_table = _load_z_table()
         if _WS is None:
             return
         box = _WS.degrees(_WS.keyboard_box(self.profile))
         self.pos_limits = tuple(tuple(box[k]) for k in ("pos_x", "pos_y", "pos_z"))
         self.ori_limits_deg = tuple(tuple(box[k]) for k in ("roll", "pitch", "yaw"))
+
+    def z_floor(self, x: float, y: float) -> tuple[float, str]:
+        """Lowest safe Z offset at this (x, y), from the measured table.
+
+        Stage 4.10 replaced the single ``Z >= -0.05`` clamp with this: above the lidar the
+        floor is high, out in front it is -0.20 or lower. Bilinear interpolation between
+        columns, clamped to the table's own edge, so the limit moves smoothly with X/Y.
+        """
+        t = self._z_table
+        if not t:
+            return self.pos_limits[2][0], "恒定盒(无安全表)"
+        xs, ys, z = t["x"], t["y"], t["z_min"]
+        xi = min(max(np.searchsorted(xs, x) - 1, 0), len(xs) - 2)
+        yi = min(max(np.searchsorted(ys, y) - 1, 0), len(ys) - 2)
+        tx = (x - xs[xi]) / (xs[xi + 1] - xs[xi]) if xs[xi + 1] != xs[xi] else 0.0
+        ty = (y - ys[yi]) / (ys[yi + 1] - ys[yi]) if ys[yi + 1] != ys[yi] else 0.0
+        tx, ty = min(max(tx, 0.0), 1.0), min(max(ty, 0.0), 1.0)
+        a = z[yi][xi] * (1 - tx) + z[yi][xi + 1] * tx
+        b = z[yi + 1][xi] * (1 - tx) + z[yi + 1][xi + 1] * tx
+        floor = a * (1 - ty) + b * ty
+        floor = max(floor, self.pos_limits[2][0])
+        return float(floor), "安全表(x,y)"
 
 
 class KeyboardTeleopController:
@@ -411,6 +446,25 @@ class KeyboardTeleopController:
             with self._lock:
                 val = self._pos_offset[axis]
                 self._pos_offset[axis] = max(lo, min(hi, val + sign * cfg.pos_rate * dt))
+        # stage 4.10: the lower Z bound depends on where the tool is (see `z_floor`), so it is
+        # enforced here rather than by the constant box above. Raised at the key rate, not
+        # instantly: moving X/Y can make the current Z unsafe, and snapping up would be a step
+        # change in the commanded pose -- the same reason R ramps instead of jumping.
+        floor, _ = self.z_floor()
+        with self._lock:
+            if self._pos_offset[2] < floor:
+                self._pos_offset[2] = min(self._pos_offset[2] + cfg.pos_rate * dt, floor)
+
+    def z_floor(self) -> tuple[float, str]:
+        """Lowest allowed Z offset for the *current* X/Y, and why.
+
+        The table is measured (`build_safe_z_table.py`): each column of the box is walked
+        downwards with continuous IK against the real collision geometry, so it answers "what
+        can the operator actually reach here", not "what could some far branch hold".
+        """
+        with self._lock:
+            x, y = self._pos_offset[0], self._pos_offset[1]
+        return self.cfg.z_floor(float(x), float(y))
 
     def _update_orientation(self, keys: frozenset) -> None:
         cfg = self.cfg

@@ -181,6 +181,24 @@ STAGE_BOXES_48 = (
 )
 STAGE_NAMES_48 = ("stage0_4.7", "stage1_1/3", "stage2_2/3", "stage3_4.8")
 
+# ---------------------------------------------------------------------------------------
+# Stage 4.10: the default pose moves forward, so the command box around it moves with it
+# ---------------------------------------------------------------------------------------
+# The tool now points along base +X at 0.88 m, which the arm can only do extended: measured
+# from the new default the TCP reaches X -0.10..+0.44, Y -0.44..+0.08, Z +-0.44 with the tool
+# orientation held. The 4.8 box (X -0.25..+0.40, Y -0.50..+0.15) therefore had 15 cm of
+# unreachable volume on the X- side and 7 cm on Y+; the box below is the same box trimmed to
+# what the new posture can actually cover. Z keeps its range: with the tool out in front of the
+# chassis the lidar is no longer underneath it, which is the point of the forward default.
+TARGET_BOX_410 = _box(
+    (-0.15, 0.40),
+    (-0.40, 0.10),
+    (-0.30, 0.40),
+    (-math.radians(45), math.radians(45)),
+    (-math.radians(30), math.radians(45)),
+    (-math.radians(60), math.radians(60)),
+)
+
 PROMOTE_AT_48 = 0.80
 PROMOTE_WINDOWS_48 = 3
 
@@ -234,13 +252,27 @@ KEYBOARD_BOX_49 = {
     "yaw": (-math.radians(80), math.radians(80)),
 }
 
+# Stage 4.10: the tool now starts pointing forward at 0.88 m, out in front of the lidar. The
+# Z floor is no longer one number -- `safe_z_table.json` gives the measured floor per (x, y)
+# column (92% of columns can go below the old -0.05; the far columns reach -0.26 and beyond).
+# The box below is therefore the *outer* envelope; the table does the safety clamping.
+KEYBOARD_BOX_410 = {
+    "pos_x": (-0.15, 0.40),
+    "pos_y": (-0.40, 0.10),
+    "pos_z": (-0.40, 0.40),
+    "roll": (-math.radians(30), math.radians(60)),
+    "pitch": (-math.radians(20), math.radians(60)),
+    "yaw": (-math.radians(80), math.radians(80)),
+}
+
 KEYBOARD_PROFILES = {
     "4.7": KEYBOARD_BOX,
     "4.8": KEYBOARD_BOX_48,
     "4.8_explore": KEYBOARD_EXPLORE_BOX,
     "4.9": KEYBOARD_BOX_49,
+    "4.10": KEYBOARD_BOX_410,
 }
-DEFAULT_KEYBOARD_PROFILE = "4.9"
+DEFAULT_KEYBOARD_PROFILE = "4.10"
 
 
 def keyboard_box(profile: str | None = None):

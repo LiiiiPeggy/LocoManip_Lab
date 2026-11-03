@@ -128,11 +128,11 @@ RANGER_CR10_CFG = ArticulationCfg(
             # arm: measured, not guessed. At j1 = 0.94 (its upper limit) the TCP sits dead
             # ahead at (0.549, -0.001, 0.470) m, so j1 = 0.6 points the tool forward while
             # leaving headroom for the reset scaling of (0.5, 1.5) to stay inside the limit.
-            "cr10_joint1": 0.6,
-            "cr10_joint2": 1.0,
-            "cr10_joint3": -2.4,
-            "cr10_joint4": 0.0,
-            "cr10_joint5": 1.4,
+            "cr10_joint1": 0.236,
+            "cr10_joint2": 0.086,
+            "cr10_joint3": -2.398,
+            "cr10_joint4": -0.830,
+            "cr10_joint5": -1.335,
             "cr10_joint6": 0.0,
             # gripper closed; its seven mimic joints are driven by PhysX mimic constraints
             "gripper_finger1_joint": 0.0,

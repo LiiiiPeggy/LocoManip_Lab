@@ -34,29 +34,35 @@ from pathlib import Path
 import numpy as np
 
 JOINT_NAMES = [f"cr10_joint{i}" for i in range(1, 7)]
-DEFAULT_Q = np.array([0.6, 1.0, -2.4, 0.0, 1.4, 0.0])
+DEFAULT_Q = np.array([0.236, 0.086, -2.398, -0.830, -1.335, 0.0])
 # the virtual TCP offset from mdp/tcp.py, in the frame of cr10_Link6
 TCP_OFFSET_POS = np.array([0.0, 0.00003, 0.14389])
 # the simulator's joint limits, which is what the policy is trained against
-LIMITS = np.array([[-3.920, 0.940], [-1.570, 1.570], [-2.860, 2.860],
-                   [-3.140, 3.140], [-3.140, 3.140], [-3.140, 3.140]])
+LIMITS = np.array(
+    [[-3.920, 0.940], [-1.570, 1.570], [-2.860, 2.860], [-3.140, 3.140], [-3.140, 3.140], [-3.140, 3.140]]
+)
 # the trained EE box: `ranges` in teleop_env_cfg.py, and the keyboard's limits by design
 TRAIN_BOX_RPY = ((-0.40, 0.40), (-0.40, 0.40), (-0.50, 0.50))
 TRAIN_BOX_POS = ((-0.12, 0.12), (-0.15, 0.15), (-0.12, 0.10))
 
-_URDF = (Path(__file__).resolve().parents[2] / "source/LeggedManip_Lab/LeggedManip_Lab"
-         / "assets/ranger_cr10/ranger_cr10_converted.urdf")
+_URDF = (
+    Path(__file__).resolve().parents[2]
+    / "source/LeggedManip_Lab/LeggedManip_Lab"
+    / "assets/ranger_cr10/ranger_cr10_converted.urdf"
+)
 
 
 def rpy_matrix(r, p, y):
     cr, sr = math.cos(r), math.sin(r)
     cp, sp = math.cos(p), math.sin(p)
     cy, sy = math.cos(y), math.sin(y)
-    return np.array([
-        [cy * cp, cy * sp * sr - sy * cr, cy * sp * cr + sy * sr],
-        [sy * cp, sy * sp * sr + cy * cr, sy * sp * cr - cy * sr],
-        [-sp, cp * sr, cp * cr],
-    ])
+    return np.array(
+        [
+            [cy * cp, cy * sp * sr - sy * cr, cy * sp * cr + sy * sr],
+            [sy * cp, sy * sp * sr + cy * cr, sy * sp * cr - cy * sr],
+            [-sp, cp * sr, cp * cr],
+        ]
+    )
 
 
 def axis_matrix(axis, ang):
@@ -117,11 +123,13 @@ def R_to_quat(R):
 
 def quat_to_R(q):
     w, x, y, z = q
-    return np.array([
-        [1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
-        [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
-        [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)],
-    ])
+    return np.array(
+        [
+            [1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
+            [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
+            [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)],
+        ]
+    )
 
 
 def _build_chain():
@@ -179,8 +187,9 @@ def exp_so3(v):
     return axis_matrix(v / ang, ang)
 
 
-def local_ik(q_start, target_p, target_R, steps=40, dls_iters=6, lam=0.05,
-             step_cap=0.08, tol=1e-5, norm="l2", irls_eps=0.02):
+def local_ik(
+    q_start, target_p, target_R, steps=40, dls_iters=6, lam=0.05, step_cap=0.08, tol=1e-5, norm="l2", irls_eps=0.02
+):
     """Differential IK that walks to the target instead of jumping to a branch.
 
     This exists because every global solver in this module has been unreliable in the same
@@ -209,11 +218,11 @@ def local_ik(q_start, target_p, target_R, steps=40, dls_iters=6, lam=0.05,
     q = np.asarray(q_start, float).copy()
     T0 = fk(q)
     p0, R0 = T0[:3, 3], T0[:3, :3]
-    dR = log_R(target_R @ R0.T)          # rotation vector, base frame, R0 -> target
+    dR = log_R(target_R @ R0.T)  # rotation vector, base frame, R0 -> target
     dp = np.asarray(target_p, float) - p0
     max_dq = 0.0
     cond = float("nan")
-    dq_prev = np.full(len(q), 0.1)   # IRLS seed: a uniform, non-zero motion
+    dq_prev = np.full(len(q), 0.1)  # IRLS seed: a uniform, non-zero motion
     for k in range(1, steps + 1):
         t = k / steps
         p_t = p0 + t * dp
@@ -241,10 +250,13 @@ def local_ik(q_start, target_p, target_R, steps=40, dls_iters=6, lam=0.05,
             max_dq = max(max_dq, float(np.linalg.norm(dq)))
     cond = float(np.linalg.cond(jacobian(q)))
     T = fk(q)
-    return (q,
-            float(np.linalg.norm(np.asarray(target_p, float) - T[:3, 3])),
-            float(np.linalg.norm(log_R(target_R @ T[:3, :3].T))),
-            max_dq, cond)
+    return (
+        q,
+        float(np.linalg.norm(np.asarray(target_p, float) - T[:3, 3])),
+        float(np.linalg.norm(log_R(target_R @ T[:3, :3].T))),
+        max_dq,
+        cond,
+    )
 
 
 def ik(target_p, target_R, q_init, iters=200, lam=0.03, step_cap=0.2):
