@@ -608,6 +608,7 @@ def coverage_suite(sim: Sim, out: Path, n: int = 60, hold: int = 30, seed: int =
         "4.8": WS.TARGET_BOX_48,
         "4.8_keyboard": WS.KEYBOARD_BOX_48,
         "4.9_keyboard": WS.KEYBOARD_BOX_49,
+        "4.10": WS.TARGET_BOX_410,
     }
     box = boxes[box_name]
     reach = _reach_oracle()
@@ -985,7 +986,7 @@ def main() -> None:
     ap.add_argument(
         "--coverage_box",
         default="candidate",
-        choices=["candidate", "keyboard", "4.8", "4.8_keyboard", "4.9_keyboard"],
+        choices=["candidate", "keyboard", "4.8", "4.8_keyboard", "4.9_keyboard", "4.10"],
         help="which workspace the coverage suite draws its targets from",
     )
     ap.add_argument(

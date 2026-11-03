@@ -125,9 +125,9 @@ ORDER = [
 ]
 
 hdr = (
-    f"{'iter':>6}{'stage':>6}{'surrogate':>11}{'value':>10}{'entropy':>10}{'lr':>10}{'std':>7}"
-    f"{'reward':>9}{'ep_len':>8}{'EE pos':>9}{'EE ori':>8}{'succ':>7}"
-    f"{'coll':>8}{'clear':>9}{'lin err':>9}{'yaw err':>9}"
+    f"{'iter':>6}{'stage':>6}{'coll':>8}{'clear':>9}{'surrogate':>11}{'value':>10}{'entropy':>10}"
+    f"{'lr':>10}{'std':>7}{'reward':>9}{'ep_len':>8}{'EE pos':>9}{'EE ori':>8}{'succ':>7}"
+    f"{'lin err':>9}{'yaw err':>9}"
 )
 print(hdr)
 print("-" * len(hdr))
