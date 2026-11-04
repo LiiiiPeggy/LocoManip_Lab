@@ -275,6 +275,9 @@ def run_scenario(sim, name: str, commands, steps_each: int = 1) -> dict:
             ori_err.append(math.degrees(row["ee_ori"]))
             slack.append(joint_slack_of(sim))
     worst["pairs"] = {f"{a} <-> {b}": c for (a, b), c in sorted(worst["pairs"].items(), key=lambda kv: -kv[1])}
+    # per-pair rate, so "which pair and how often" is one number rather than a count next to a
+    # sample count the reader has to divide by -- stage 4.10e reports Link3 <-> Link5 this way
+    worst["pair_rate"] = {k: v / max(worst["samples"], 1) for k, v in worst["pairs"].items()}
     worst["contact_rate"] = sum(worst["pairs"].values()) / max(worst["samples"], 1)
     worst["ee_err_median"] = float(np.median(ee_err)) if ee_err else 0.0
     worst["ori_err_median"] = float(np.median(ori_err)) if ori_err else 0.0

@@ -283,3 +283,12 @@ change without the guard, 0.0% with it.
   link's axis cover its edges but not the flat faces that graze across the gap between two sphere
   centres, so anything inside that residual should be measured with MuJoCo, not with the proxy the
   reward uses.
+- **`rsl_rl`'s `learn(num_learning_iterations)` counts *forward* from the resumed iteration, and a
+  long PPO run can die on a single critic-target blow-up (2026-11-04).** Resuming `model_5999` with
+  `--max_iterations 10000` targets 15999, not 10000 (the log prints `iteration 9335/15999`); to stop
+  at a cumulative number, pass the difference. The 4.10e continuation then diverged at iteration
+  9336 -- value loss `inf`, then `nan`, then `torch.normal(std < 0)` -- while the environment metrics
+  one iteration earlier were still healthy (EE 0.0515 m, success 93.7%, collision 0%). Nothing in the
+  env was wrong: a single return of the wrong magnitude fed the critic, and every later parameter is
+  downstream of it. Resume from the last saved checkpoint (9000 here), keep the crashed log, and
+  treat "value loss rising for a few hundred iterations" as the warning that precedes it.

@@ -452,6 +452,24 @@ Artifacts (each verified by loading/playing it back, not by exit code):
    used: per column the tool reaches -0.10/-0.15/-0.40 m on the far side and stops at 0.00
    directly above the lidar, against 4.9's single -0.05 everywhere.
 
+   **Stage 4.10e (2026-11-04) extended the run to cumulative 10000.** `rsl_rl`'s
+   `learn(num_learning_iterations)` is *relative*, so `--max_iterations 10000` from `model_5999`
+   targets 15999 (the log says `9335/15999`), and stopping at 10000 needs `4001` from 5999 or `1000`
+   from 9000. The extended run **diverged at iteration 9336** -- value loss `inf` then `nan`, then
+   `normal(std < 0)` -- with the environment metrics still healthy one iteration earlier (EE 0.0515,
+   success 93.7%, collision 0%); same critic-target blow-up as 4.5j. Log kept as
+   `outputs/stage410/train_e_diverged_at_9336.log`; the run resumed from the last healthy checkpoint
+   (`model_9000`) for the remaining 1000 iterations with no further NaN. Final measurements on the
+   4.10 box (5999 -> 9999): 50 mm/5 deg 65.0 -> **68.3%**, 30 mm/2 deg 16.7 -> **28.3%**, position
+   median 32 -> **22 mm**, orientation 3.7 -> **2.5 deg**, real self-collision 11.0 -> **9.5%**. The
+   50 mm/5 deg figure is saturated (65-68% across 7000/8000/9000/9999), so the honest summary is
+   "the last 4000 iterations bought 10 mm of position and 12 points of the strict tier, not a new
+   operating regime". **Deployed `stage410f_ppo/model_9999`**, with `5999` kept as the margin-first
+   alternative: the chassis clearance fell from 15 mm (5999) to 0.4 mm at 9000 and 7 mm at 9999 --
+   never a contact, but the reward barely distinguishes anything inside 2 cm, so "trains into the
+   margin" is structural. `Link3 <-> Link5` self-collision stays at 9.5% and is listed as the next
+   stage's job, not folded into this result.
+
    **Stage 4.9 (2026-11-02) gave the robot collision geometry and taught the policy to respect it.**
    The user saw the arm pass through the lidar and the chassis camera in MuJoCo; the reason was
    structural -- only the chassis, the steering forks, the wheels and the six arm links carried
