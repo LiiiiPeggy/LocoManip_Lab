@@ -43,6 +43,8 @@ import argparse
 import json
 from pathlib import Path
 
+import os
+
 from isaaclab.app import AppLauncher
 
 ap = argparse.ArgumentParser(description=__doc__)
@@ -52,6 +54,12 @@ ap.add_argument("--num_envs", type=int, default=2048)
 ap.add_argument("--task", default="RANGER-CR10-TELEOP-WBC")
 ap.add_argument("--seed", type=int, default=42)
 ap.add_argument("--out", default="outputs/stage411/value_diagnostics.jsonl")
+ap.add_argument(
+    "--log_dir",
+    default="",
+    help="where rsl_rl writes its event files and checkpoints; a fresh directory avoids the "
+    "TensorBoard writer sharing a directory with a previous attempt",
+)
 ap.add_argument(
     "--full_resume",
     action="store_true",
@@ -67,6 +75,12 @@ ap.add_argument(
     "needs serialises the rollout and made a 2048-env iteration take minutes instead of seconds.",
 )
 args = ap.parse_args()
+
+if os.environ.get("STAGE411_FAULTHANDLER"):
+    # a hung run that prints nothing is worse than a crash: dump where it is instead of guessing
+    import faulthandler
+
+    faulthandler.dump_traceback_later(int(os.environ["STAGE411_FAULTHANDLER"]), exit=True)
 
 app_launcher = AppLauncher(headless=True, device="cuda:0")
 simulation_app = app_launcher.app
@@ -200,21 +214,31 @@ def main() -> None:
     env_cfg.commands.ee_pose.debug_vis = False
     env = gym.make(args.task, cfg=env_cfg)
     env = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
-    log_dir = Path("logs/rsl_rl/ranger_cr10_teleop/_stage411_diag")
+    log_dir = Path(args.log_dir or "logs/rsl_rl/ranger_cr10_teleop/_stage411_diag")
     log_dir.mkdir(parents=True, exist_ok=True)
     if args.reward_terms:
         instrument_reward_terms(env)
     runner = OnPolicyRunner(env, agent_cfg.to_dict(), log_dir=str(log_dir), device=agent_cfg.device)
+    print("[diag] runner built, loading checkpoint", flush=True)
     if args.full_resume:
         runner.load(args.resume)
     else:
         runner.load(args.resume, load_cfg={"actor": True, "critic": True, "optimizer": False, "iteration": False})
+    print("[diag] checkpoint loaded, starting learn", flush=True)
     runner.learn(num_learning_iterations=args.iterations, init_at_random_ep_len=True)
     print(f"wrote {OUT}")
 
 
 if __name__ == "__main__":
+    # Isaac Lab's `close()` terminates the process from native code, so an exception raised in
+    # `main` is otherwise never printed and the process still looks like it merely stopped
+    # (AGENTS.md). Print it here, before close has the chance to swallow it.
     try:
         main()
+    except BaseException:
+        import traceback
+
+        traceback.print_exc()
+        raise
     finally:
         simulation_app.close()
