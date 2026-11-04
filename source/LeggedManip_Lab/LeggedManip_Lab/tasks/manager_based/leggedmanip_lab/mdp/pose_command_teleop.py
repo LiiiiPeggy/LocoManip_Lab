@@ -67,6 +67,7 @@ import torch
 from isaaclab.utils.math import combine_frame_transforms, compute_pose_error, quat_from_euler_xyz, quat_mul
 
 from .pose_command_b import UniformBodyPoseCommand
+from .safety import PROTECTED_PARTS
 from .tcp import tcp_pose_b, tcp_pose_w
 
 if TYPE_CHECKING:
@@ -129,9 +130,21 @@ class UniformTCPBodyPoseCommand(UniformBodyPoseCommand):
         super().__init__(cfg, env)
         self.metrics["success"] = torch.zeros(self.num_envs, device=self.device)
         # stage 4.9: clearance to the lidar / chassis camera / chassis, logged so the report
-        # can show whether a policy traded tracking accuracy for staying clear
+        # can show whether a policy traded tracking accuracy for staying clear.
+        # stage 4.11: split into the arm's own self clearance and the arm-to-chassis clearance,
+        # plus the individual pairs that actually close. One number was hiding the collision
+        # pair -- the 4.10 policy was in real `Link3 <-> Link5` contact while a single minimum
+        # reported 0.24%.
         self.metrics["min_clearance"] = torch.zeros(self.num_envs, device=self.device)
         self.metrics["collision"] = torch.zeros(self.num_envs, device=self.device)
+        self.metrics["clearance_self"] = torch.zeros(self.num_envs, device=self.device)
+        self.metrics["clearance_sensor"] = torch.zeros(self.num_envs, device=self.device)
+        self.metrics["collision_self"] = torch.zeros(self.num_envs, device=self.device)
+        self.metrics["collision_sensor"] = torch.zeros(self.num_envs, device=self.device)
+        for name in ("Link3_Link5", "Link4_Link6", "Link3_Link6"):
+            self.metrics[f"clearance_{name}"] = torch.zeros(self.num_envs, device=self.device)
+        for name in PROTECTED_PARTS:
+            self.metrics[f"clearance_sensor_{name}"] = torch.zeros(self.num_envs, device=self.device)
         self._success_sum = torch.zeros(self.num_envs, device=self.device)
         self._success_count = torch.zeros(self.num_envs, device=self.device)
         # workspace curriculum state (stage 4.7); 0 is the box this task has always used
@@ -272,12 +285,22 @@ class UniformTCPBodyPoseCommand(UniformBodyPoseCommand):
         self._reach_sum += success * reach
         self._reach_count += reach
 
-        # stage 4.9: the safety signal, logged next to the tracking error it trades against
-        from .safety import total_clearance
+        # stage 4.9/4.11: the safety signal, logged next to the tracking error it trades
+        # against -- separately for the arm's own pairs and for the arm-to-chassis pairs, so
+        # a collision cannot hide behind an unrelated minimum
+        from .safety import clearance_summary, penalty_clearance
 
-        d = total_clearance(self.robot)
-        self.metrics["min_clearance"] = d
-        self.metrics["collision"] = (d <= 0.0).to(success.dtype)
+        summary = clearance_summary(self._env, self.robot)
+        self.metrics["min_clearance"] = penalty_clearance(self._env, self.robot)
+        self.metrics["collision"] = (self.metrics["min_clearance"] <= 0.0).to(success.dtype)
+        self.metrics["clearance_self"] = summary["self"]
+        self.metrics["clearance_sensor"] = summary["sensor"]
+        self.metrics["collision_self"] = (summary["self"] <= 0.0).to(success.dtype)
+        self.metrics["collision_sensor"] = (summary["sensor"] <= 0.0).to(success.dtype)
+        for name in ("Link3_Link5", "Link4_Link6", "Link3_Link6"):
+            self.metrics[f"clearance_{name}"] = summary[name]
+        for name in PROTECTED_PARTS:
+            self.metrics[f"clearance_sensor_{name}"] = summary[f"sensor_{name}"]
 
     def _debug_vis_callback(self, event):
         if not self.robot.is_initialized:

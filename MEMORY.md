@@ -129,6 +129,49 @@ need focus). `ViewerKeyPin` restores `opt.flags`/`opt.geomgroup` as a backstop.
 `scripts/ranger_cr10/check_viewer_key_pinning.py` verifies on the picture itself: 38.0% of pixels
 change without the guard, 0.0% with it.
 
+## `m.mesh_vert` is the geom frame, not the link frame (2026-11-04)
+
+MuJoCo re-expresses every mesh in its own geom frame: `geom_quat` is whatever the compiler
+computed, and for the CR10 meshes it is a 60–90° rotation relative to the URDF link (Link3 turns
+90° about y, Link5 87° about x, Link6 ~90° about z). `m.mesh_vert` therefore comes back **rotated**,
+and a bounding box read off it is the right *shape* in the wrong *frame*.
+
+This was silent for two stages: the numbers look plausible (same extents), the picture in the
+viewer is unchanged (geom_xmat puts it back), and only the *distance* is wrong. Stage 4.9's
+`mdp/safety.py` table was copied that way, so a 675 mm link's box pointed along the wrong axis and
+its ends sat ~0.3 m from the geometry they were meant to cover. Measured over 1200 random arm
+configurations: 62% of the real `cr10_Link3 <-> cr10_Link5` contacts were invisible to that proxy,
+while MuJoCo found them on 9.5% of the steps of the 4.10 evaluation sweep.
+
+Build the table from the model, not by hand — `scripts/ranger_cr10/build_collision_boxes.py` walks
+each geom into the frame of the Isaac body that owns it (the URDF→USD conversion merges
+`gripper_base_link`/`d455_link` into `cr10_Link6`, and `lidar_link0`/`d435_link` into `base_link`).
+Re-run it whenever `build_mjcf.py` changes collision geometry: the 4.10 D455 re-mount left the old
+mount position in the table for a whole stage.
+
+Two things that look like the same bug and are not: `mj_geomDistance` returns **penetration depth**
+(negative) for real contacts, so comparing it to a clearance clamps at zero and shows a large
+positive "error"; and a box bound is 8–17 mm *conservative* against the mesh, so a proxy reading of
+0 is not a contact. `scripts/ranger_cr10/check_clearance_proxy.py` reports both separately.
+
+## `pgrep -f <script>` cannot tell you whether a training run is alive (2026-11-04)
+
+`pgrep -f "rsl_rl/train.py"` matches **the shell that launched it** and the shell running the
+check — their command lines contain the string. A run that had died at 14:22 looked alive at
+18:50 because of this, and four hours of wall clock went into waiting for a process that was not
+there.
+
+`scripts/ranger_cr10/check_training_health.py` reads `/proc/*/cmdline` and requires **argv[0] to be
+a Python interpreter** *and* an argv entry ending in `scripts/rsl_rl/train.py`; shells that merely
+mention the path do not match. It also loads the newest checkpoint and rejects one holding any
+non-finite tensor, because a run can die inside a PPO update and leave its last saved file fine
+(that is what happens here: `value loss 3 -> 1e14 -> inf -> normal(std < 0)`, environment metrics
+healthy throughout, at iterations 1402 / 1209 / 2037 of stage 4.11 and 9336 of 4.10e).
+
+Related trap: this machine **suspends intermittently**. `ps etime` and the run's own
+`Time elapsed` do not include the suspended time, so "2 h 10 m elapsed" and six hours of calendar
+time can both be true. Trust checkpoints and log lines, not clock arithmetic.
+
 ## Where the design is documented
 
 - `PROJECT_INTRO.md` — the deep description: observation/action space, every reward term and weight,

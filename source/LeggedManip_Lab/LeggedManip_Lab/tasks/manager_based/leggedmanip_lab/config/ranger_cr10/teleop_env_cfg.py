@@ -301,12 +301,18 @@ class RangerCr10TeleopEnvCfg(LeggedManipLabEnvCfg):
         # the chassis body. Measured before this stage: the 4.8 policy drives the gripper
         # 27 mm into the lidar's mesh on the way to Z-0.25 and does it on 51% of the steps of
         # that sweep, with nothing in training able to see it (`enabled_self_collisions=False`
-        # and no collision geometry on the sensors in MuJoCo). The term is reference-relative
-        # -- see `sensor_clearance_penalty` for why an absolute margin is wrong here.
+        # and no collision geometry on the sensors in MuJoCo).
+        # stage 4.11: the same term now also covers the arm's own pairs (`Link3 <-> Link5` was
+        # in contact on 9.5% of the 4.10 random sweep and the proxy could not see it), and the
+        # margin is absolute: 15 mm against a distance whose measured bias is 7-15 mm on the
+        # conservative side, so the penalty starts at roughly 30 mm of true clearance. The
+        # reference-relative form it replaces existed to hide that bias, not to express a
+        # safety requirement. `sensor_clearance_penalty` documents the two pairs that are
+        # excluded because no action changes them.
         self.rewards.arm_sensor_clearance = RewTerm(  # type: ignore[attr-defined]
             func=mdp.sensor_clearance_penalty,
             weight=2.0,
-            params={"asset_cfg": SceneEntityCfg("robot"), "margin": 0.02},
+            params={"asset_cfg": SceneEntityCfg("robot"), "margin": 0.015},
         )
 
         self.rewards.end_effector_position_tracking_fine = RewTerm(  # type: ignore[attr-defined]

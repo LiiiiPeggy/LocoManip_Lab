@@ -12,76 +12,78 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Stage 4.9: how close is the arm to the lidar, the chassis camera, and the chassis body?
+"""Stage 4.11: how close the arm is to itself, to the lidar, to the cameras, to the chassis.
 
-The task learned end-effector tracking with ``enabled_self_collisions=False``, so nothing in
-training ever saw the arm going through the chassis-mounted sensors. Turning PhysX self
-collision on is not enough by itself -- a contact is a binary, late signal, and the reward
-needs a gradient *before* the impact -- so this module computes a clearance from forward
-kinematics:
+The task trains with ``enabled_self_collisions=False`` -- PhysX self collision moves the
+authored pose (measured in stage 4.9: the rest residual went from 1.009 to 1.534 rad) -- so the
+only safety signal the policy can act on is one computed here from forward kinematics. A
+contact is a binary, late signal anyway; the reward needs a gradient *before* the impact.
 
-* **the arm** is approximated by spheres spread along each link's collision box (the boxes
-  come from the URDF meshes, the same values ``mujoco/robots/ranger_cr10/build_mjcf.py``
-  uses, so the two simulators describe the same geometry);
-* **the protected parts** (lidar tower, chassis camera, chassis body) are axis-aligned boxes
-  in their own link frames -- all three are mounted with identity rotation relative to
-  ``base_link``, which is asserted rather than assumed.
+**What changed in 4.11, and why.** Until this stage the box table was copied by hand out of
+``m.mesh_vert``, which is the **geom frame**, not the link frame: MuJoCo re-expresses every
+mesh in its own frame (``geom_quat``), and for these meshes that frame is rotated relative to
+the URDF link by up to 90 degrees. The numbers looked plausible -- same extents -- but for a
+675 mm link they described a box pointing along the wrong axis, so its ends sat ~0.3 m from the
+geometry they were meant to cover. Measured over 1200 random arm configurations, the old proxy
+was blind to **62%** of the real ``cr10_Link3 <-> cr10_Link5`` contacts; the 4.10e policy was in
+contact on 9.5% of the steps of the random six-dimensional sweep while the proxy reported
+0.24%. The table now comes from ``scripts/ranger_cr10/build_collision_boxes.py``, which asks
+the model for every collision geom, moves it into the frame of the **Isaac body** that owns it
+(the URDF->USD conversion merges ``gripper_base_link`` and ``d455_link`` into ``cr10_Link6``,
+and ``lidar_link0`` / ``d435_link`` into ``base_link``) and reports the axis-aligned bounds
+there. Re-run that script after any collision-geometry change: the 4.10 D455 re-mount left
+this table pointing at the old mount for a whole stage.
 
-Sphere-to-box and sphere-to-sphere distances are exact and cheap, which is what makes this
-usable as a per-step reward at 2048 environments. The approximation is on the arm side: a
-sphere set that circumscribes a link is *conservative*, so the penalty starts slightly early.
-`scripts/ranger_cr10/check_clearance_proxy.py` measures that bias against MuJoCo's exact
-convex-hull distance and reports it rather than assuming it is small.
+**Distance.** Boxes are oriented (a link rotates with the robot) and the distance is the true
+oriented-box distance -- the vertices of one box against the other, plus the 144 edge/edge
+pairs. One axis-aligned box per link is a *bound*, not the shape, so the box distance is a
+lower bound on the mesh distance: conservative, never optimistic, which is the direction a
+safety term has to err in. The evaluation is two-stage: an axis-separation bound (3 + 3 face
+normals, 9 edge cross products) decides whether a pair is near enough for the reward to care,
+and only those pairs get the full evaluation. In the operating region that is a handful of
+(environment, pair) entries per step.
 
-Nothing here is used by the actor: the observation and action spaces are untouched.
+Nothing here reaches the actor: the observation and action spaces are untouched.
 """
 
 from __future__ import annotations
 
-import math
-
 import torch
 
-# Collision boxes in each link's own frame: (centre, half-extent), metres. Read out of the
-# MuJoCo collision geoms generated from `ranger_cr10_converted.urdf` (stage 4.9) -- the arm
-# links are convex hulls of their meshes, described here by their axis-aligned bounds.
-# The bodies are the ones **Isaac Lab's USD actually has**. The URDF→USD conversion merges
-# fixed joints, so `cr10_base_link`, `gripper_base_link`, `d455_link`, `lidar_link0` and
-# `d435_link` do not exist as articulation bodies in Isaac at all -- verified by listing
-# `robot.body_names`. Every box below is therefore expressed in a body that exists in both
-# simulators, with the merged links' offsets folded in:
-#   * the AG95 tool is coincident with `cr10_Link6` (identity, zero offset);
-#   * the D455 is mounted on it with a rotation, so its box is its rotated AABB in Link6;
-#   * the arm mount (`cr10_base_link`) is fused to `base_link` and is skipped -- it is the
-#     parent/child pair MuJoCo excludes anyway.
-ARM_BOXES = {
-    "cr10_Link1": ("cr10_Link1", (0.0000, -0.0130, 0.0058), (0.0772, 0.0905, 0.1045)),
-    "cr10_Link2": ("cr10_Link2", (-0.2824, 0.0034, 0.1823), (0.0772, 0.1006, 0.3728)),
-    "cr10_Link3": ("cr10_Link3", (-0.2797, -0.0026, 0.0622), (0.0608, 0.0742, 0.3378)),
-    "cr10_Link4": ("cr10_Link4", (0.0000, 0.0059, -0.0105), (0.0464, 0.0593, 0.0805)),
-    "cr10_Link5": ("cr10_Link5", (0.0000, -0.0225, -0.0095), (0.0464, 0.0538, 0.0855)),
-    "cr10_Link6": ("cr10_Link6", (0.0016, -0.0005, -0.0178), (0.0211, 0.0450, 0.0502)),
-    # the AG95: palm plus one box per jaw. The jaw boxes stand in for the finger links, which
-    # carry a visual mesh but no collision geometry -- which is exactly how the tool used to
-    # pass 27 mm into the lidar without a contact being reported.
-    "gripper_base_link_palm": ("cr10_Link6", (0.0000, 0.0004, 0.0656), (0.0335, 0.0466, 0.0691)),
-    "gripper_base_link_jaw_l": ("cr10_Link6", (-0.0495, 0.0, 0.1290), (0.0235, 0.0260, 0.0560)),
-    "gripper_base_link_jaw_r": ("cr10_Link6", (0.0495, 0.0, 0.1290), (0.0235, 0.0260, 0.0560)),
-    "d455_link": ("cr10_Link6", (-0.0100, -0.0746, 0.0328), (0.0620, 0.0146, 0.0130)),
+# ---------------------------------------------------------------------------------------
+# Collision boxes, in the frame of the Isaac body that applies them.
+#
+# Generated by `scripts/ranger_cr10/build_collision_boxes.py` from the MuJoCo collision
+# geometry. Each entry is (part name, centre, half extent, local quat or None). The quat is
+# only non-identity where the physics model itself carries a rotated primitive -- today the
+# D455, which sits on the tool at 90 degrees to it.
+# ---------------------------------------------------------------------------------------
+ARM_PARTS = {
+    "cr10_Link1": [("cr10_Link1_col", (0.0, -0.01238, 0.00575), (0.07724, 0.08962, 0.10325), None)],
+    "cr10_Link2": [("cr10_Link2_col", (-0.29565, 0.0, 0.202), (0.37289, 0.07724, 0.1), None)],
+    "cr10_Link3": [("cr10_Link3_col", (-0.27674, 0.0, 0.051), (0.33762, 0.06082, 0.0735), None)],
+    "cr10_Link4": [("cr10_Link4_col", (0.0, 0.01025, -0.01007), (0.04637, 0.07825, 0.05643), None)],
+    "cr10_Link5": [("cr10_Link5_col", (0.0, -0.0175, -0.00532), (0.04637, 0.084, 0.05168), None)],
+    "cr10_Link6": [
+        ("cr10_Link6_col", (0.0, -0.00517, -0.02095), (0.045, 0.05011, 0.02095), None),
+        ("gripper_base_link_col0", (0.0, 0.0, 0.0656), (0.0465, 0.0335, 0.0691), None),
+        ("gripper_base_link_col1", (-0.0495, 0.0, 0.129), (0.0235, 0.026, 0.056), None),
+        ("gripper_base_link_col2", (0.0495, 0.0, 0.129), (0.0235, 0.026, 0.056), None),
+        ("d455_link_col", (-0.0475, 0.1, 0.13155), (0.013, 0.062, 0.0145), (0.5, -0.5, -0.5, -0.5)),
+    ],
 }
 
-# The parts the arm may not touch, in the **base_link** frame. All three are rigid to the
-# chassis, and in Isaac they are *part of* base_link (merged fixed joints), so expressing
-# them here is both correct and the only thing that works on both sides.
-PROTECTED_BOXES = {
-    "lidar_link0": ((0.5086, 0.0027, 0.1738), (0.0858, 0.1269, 0.1427)),
-    "d435_link": ((0.6215, 0.0, 0.2364), (0.0125, 0.045, 0.0125)),
-    "base_link": ((0.0, -0.0033, -0.0571), (0.651, 0.4347, 0.2176)),
+# The parts the arm may not touch. Each group names the Isaac body that carries the transform
+# (all three are rigid to `base_link`) plus the parts expressed in it. The lidar and the
+# chassis camera stay separate groups so a contact is attributed to a part, not to "the base".
+PROTECTED_PARTS = {
+    "base_link": ("base_link", [("base_link_col", (0.0, -0.0033, -0.0571), (0.651, 0.4347, 0.21755), None)]),
+    "lidar_link0": ("base_link", [("lidar_link0_col", (0.50509, 0.00166, 0.13538), (0.11921, 0.12723, 0.11687), None)]),
+    "d435_link": ("base_link", [("d435_link_col", (0.62148, 0.0, 0.23637), (0.01253, 0.045, 0.0125), None)]),
 }
 
-# Arm-to-arm pairs that are *not* worth penalising: parent/child pairs overlap at the joint
-# by design, and the tool parts are one rigid body. Everything else is a real self-collision
-# (measured in MuJoCo: Link3 <-> the wrist camera, Link2 <-> gripper).
+ARM_BODIES = tuple(ARM_PARTS)
+# Parent/child pairs overlap at the joint by design and are excluded in MuJoCo too.
 ARM_ADJACENT = {
     ("cr10_Link1", "cr10_Link2"),
     ("cr10_Link2", "cr10_Link3"),
@@ -90,177 +92,447 @@ ARM_ADJACENT = {
     ("cr10_Link5", "cr10_Link6"),
 }
 
-# Arm entries that must not be measured against a protected part. The mount is fused to the
-# chassis in Isaac and excluded in MuJoCo, so nothing is skipped today; the table is kept
-# because it is the place that decision belongs.
-PROTECTED_SKIP = {}
+# Pairs worth watching on their own, so a single minimum cannot hide which pair is closing.
+WATCHED_SELF = {
+    "Link3_Link5": ("cr10_Link3", "cr10_Link5"),
+    "Link4_Link6": ("cr10_Link4", "cr10_Link6"),
+    "Link3_Link6": ("cr10_Link3", "cr10_Link6"),
+}
+WATCHED_SENSOR = {name: name for name in PROTECTED_PARTS}
+
+# Pairs that are *right* but cannot be acted on: `cr10_Link1` sits 18.6 mm above the chassis
+# at the authored pose and only rotates about the mount axis, so its distance to the chassis is
+# essentially a property of the hardware. Penalising it would subtract a constant from every
+# step and teach nothing. MuJoCo does not exclude the pair (it is grandparent/grandchild, not
+# parent/child), so it stays in the report; it just does not enter the reward.
+STRUCTURAL = {("cr10_Link1", "base_link")}
 
 
-def _spheres(centre, half):
-    """Spheres that *cover* a box, along its longest axis.
-
-    The radius is the half-diagonal of the cross-section, so the corners are covered rather
-    than the inscribed circle; that makes the proxy conservative (it reports a smaller
-    clearance than the true geometry), which is the safe direction for a safety term. The
-    centres stop one radius short of each end so the set does not grow the link.
-    `check_clearance_proxy.py` measures the resulting bias against MuJoCo's convex hulls.
-    """
-    axis = max(range(3), key=lambda i: half[i])
-    long_h = half[axis]
-    r = math.hypot(half[(axis + 1) % 3], half[(axis + 2) % 3])
-    if long_h <= r:
-        return [(*centre, max(long_h, r))]
-    inner = long_h - r
-    step = r * 0.5
-    n = max(2, int(math.ceil(2.0 * inner / step)) + 1)
-    out = []
-    for i in range(n):
-        t = -inner + (2.0 * inner) * i / (n - 1)
-        c = list(centre)
-        c[axis] = centre[axis] + t
-        out.append((*c, r))
-    return out
-
-
-# Flattened sphere set: local centre, radius, and the index of the owning body.
-_BODY_ORDER = list(dict.fromkeys(v[0] for v in ARM_BOXES.values()))
-
-
-def _flatten():
-    centres, radii, owner = [], [], []
-    for entry, (body, centre, half) in ARM_BOXES.items():
-        for c in _spheres(centre, half):
-            centres.append(c[:3])
-            radii.append(c[3])
-            owner.append(_BODY_ORDER.index(body))
+def _flatten_arm() -> tuple[list[str], torch.Tensor, torch.Tensor, torch.Tensor]:
+    bodies, centres, halves, quats = [], [], [], []
+    for body, entries in ARM_PARTS.items():
+        for _, centre, half, quat in entries:
+            bodies.append(body)
+            centres.append(centre)
+            halves.append(half)
+            quats.append((1.0, 0.0, 0.0, 0.0) if quat is None else quat)
     return (
+        bodies,
         torch.tensor(centres, dtype=torch.float32),
-        torch.tensor(radii, dtype=torch.float32),
-        torch.tensor(owner, dtype=torch.long),
+        torch.tensor(halves, dtype=torch.float32),
+        torch.tensor(quats, dtype=torch.float32),
     )
 
 
-SPHERE_CENTRES, SPHERE_RADII, SPHERE_OWNER = _flatten()
+def _flatten_protected() -> tuple[list[str], list[str], torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Flatten the protected table; returns the group name of every part as well."""
+    groups, bodies, centres, halves, quats = [], [], [], [], []
+    for group, (body, entries) in PROTECTED_PARTS.items():
+        for _, centre, half, quat in entries:
+            groups.append(group)
+            bodies.append(body)
+            centres.append(centre)
+            halves.append(half)
+            quats.append((1.0, 0.0, 0.0, 0.0) if quat is None else quat)
+    return (
+        groups,
+        bodies,
+        torch.tensor(centres, dtype=torch.float32),
+        torch.tensor(halves, dtype=torch.float32),
+        torch.tensor(quats, dtype=torch.float32),
+    )
 
 
-def _pair_mask():
-    """(S, S) boolean: arm-sphere pairs whose distance is worth penalising."""
-    n = len(SPHERE_OWNER)
-    body = [ARM_BOXES[k][0] for k in ARM_BOXES for _ in _spheres(ARM_BOXES[k][1], ARM_BOXES[k][2])]
-    assert len(body) == n
-    mask = torch.zeros((n, n), dtype=torch.bool)
-    for i in range(n):
-        for j in range(i + 1, n):
-            bi, bj = body[i], body[j]
-            if bi == bj:
+ARM_BODY_LIST, ARM_CENTRES, ARM_HALVES, ARM_QUATS = _flatten_arm()
+PROT_GROUPS, PROT_BODY_LIST, PROT_CENTRES, PROT_HALVES, PROT_QUATS = _flatten_protected()
+
+
+def _pairs() -> tuple[list[tuple[int, int]], list[tuple[int, int]]]:
+    """(arm-arm, arm-protected) part index pairs."""
+    self_pairs = []
+    for i in range(len(ARM_BODY_LIST)):
+        for j in range(i + 1, len(ARM_BODY_LIST)):
+            a, b = ARM_BODY_LIST[i], ARM_BODY_LIST[j]
+            if a == b or (a, b) in ARM_ADJACENT or (b, a) in ARM_ADJACENT:
                 continue
-            if tuple(sorted((bi, bj))) in {tuple(sorted(p)) for p in ARM_ADJACENT}:
-                continue
-            mask[i, j] = True
-    return mask
+            self_pairs.append((i, j))
+    sensor_pairs = [(i, k) for i in range(len(ARM_BODY_LIST)) for k in range(len(PROT_BODY_LIST))]
+    return self_pairs, sensor_pairs
 
 
-SELF_PAIR_MASK = _pair_mask()
+SELF_PAIRS, SENSOR_PAIRS = _pairs()
 
-# For each protected part, the arm spheres that must not be measured against it.
-SPHERE_SKIP = {}
-for _protected_name in PROTECTED_BOXES:
-    _skip = torch.zeros(len(SPHERE_OWNER), dtype=torch.bool)
-    for i, _owner in enumerate(SPHERE_OWNER.tolist()):
-        if _protected_name in PROTECTED_SKIP.get(_BODY_ORDER[_owner], set()):
-            _skip[i] = True
-    SPHERE_SKIP[_protected_name] = _skip
+# Below this, the face and edge answers are the same number and the full pass is skipped. It
+# bounds the optimism of reporting the vertex value for pairs that were not refined.
+EDGE_TOLERANCE = 2e-3
 
-
-def _base_relative(asset, body_ids, base_id, device):
-    """(pos, quat) of ``body_ids`` expressed in the ``base_id`` frame."""
-    from isaaclab.utils.math import quat_apply, quat_conjugate, quat_mul
-
-    base_pos = asset.data.body_pos_w[:, base_id]
-    base_quat = asset.data.body_quat_w[:, base_id]
-    conj = quat_conjugate(base_quat).unsqueeze(1).expand(-1, len(body_ids), -1)
-    pos = asset.data.body_pos_w[:, body_ids] - base_pos.unsqueeze(1)
-    pos = quat_apply(conj, pos)
-    rel_quat = quat_mul(conj, asset.data.body_quat_w[:, body_ids])
-    return pos, rel_quat
+# Box corners in a fixed order, and the twelve edges as index pairs into them.
+_CORNERS = torch.tensor(
+    [[sx, sy, sz] for sx in (-1.0, 1.0) for sy in (-1.0, 1.0) for sz in (-1.0, 1.0)], dtype=torch.float32
+)
+_EDGES = torch.tensor(
+    [(i, j) for i in range(8) for j in range(i + 1, 8) if int((_CORNERS[i] - _CORNERS[j]).abs().sum().item()) == 2],
+    dtype=torch.long,
+)
 
 
-def _assemble_spheres(asset, base_body_name="base_link"):
-    from isaaclab.utils.math import quat_apply
-
-    device = asset.data.body_pos_w.device
-    base_ids, _ = asset.find_bodies([base_body_name])
-    ids, _ = asset.find_bodies(_BODY_ORDER, preserve_order=True)
-    pos, quat = _base_relative(asset, ids, base_ids[0], device)
-    owner = SPHERE_OWNER.to(device)
-    centres = quat_apply(quat[:, owner], SPHERE_CENTRES.to(device).unsqueeze(0).expand(pos.shape[0], -1, -1))
-    centres = centres + pos[:, owner]
-    return centres, SPHERE_RADII.to(device), pos, quat
+def _body_ids(asset) -> dict[str, int]:
+    return {name: i for i, name in enumerate(asset.body_names)}
 
 
-def arm_clearance(asset, base_body_name: str = "base_link", cap: float = 0.5, protected=None):
-    """Per-environment minimum distance (m) between the arm chain and the protected parts.
+# -- quaternion helpers ------------------------------------------------------------------
+# Local rather than `isaaclab.utils.math` on purpose: this module is the ground truth for a
+# safety signal, and `scripts/ranger_cr10/check_clearance_proxy.py` has to be able to exercise
+# it against MuJoCo without booting the Isaac app (which would take a GPU and 30 s per run).
+# Same convention throughout: (w, x, y, z), and `quat_apply` is R(q) @ v.
+def _quat_apply(quat: torch.Tensor, vec: torch.Tensor) -> torch.Tensor:
+    w, x, y, z = quat.unbind(-1)
+    shape = vec.shape
+    w, x, y, z = (t.unsqueeze(-1) for t in (w, x, y, z))
+    vx, vy, vz = (t.unsqueeze(-1) for t in vec.unbind(-1))
+    tx = 2.0 * (y * vz - z * vy)
+    ty = 2.0 * (z * vx - x * vz)
+    tz = 2.0 * (x * vy - y * vx)
+    out = torch.stack(
+        [
+            vx + w * tx + (y * tz - z * ty),
+            vy + w * ty + (z * tx - x * tz),
+            vz + w * tz + (x * ty - y * tx),
+        ],
+        dim=-1,
+    )
+    return out.reshape(shape)
 
-    Everything is computed in the ``base_link`` frame. That is exact for the protected boxes:
-    the lidar and the camera are fixed to the chassis with identity rotation, so both the box
-    and the distances stay axis-aligned there however the chassis turns.
+
+def _quat_mul(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+    aw, ax, ay, az = a.unbind(-1)
+    bw, bx, by, bz = b.unbind(-1)
+    return torch.stack(
+        [
+            aw * bw - ax * bx - ay * by - az * bz,
+            aw * bx + ax * bw + ay * bz - az * by,
+            aw * by - ax * bz + ay * bw + az * bx,
+            aw * bz + ax * by - ay * bx + az * bw,
+        ],
+        dim=-1,
+    )
+
+
+def _quat_conjugate(quat: torch.Tensor) -> torch.Tensor:
+    return torch.cat([quat[..., :1], -quat[..., 1:]], dim=-1)
+
+
+def _quat_to_matrix(quat: torch.Tensor) -> torch.Tensor:
+    """(..., 4) -> (..., 3, 3), with the columns being the rotated basis vectors."""
+    w, x, y, z = quat.unbind(-1)
+    rows = [
+        torch.stack([1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y)], dim=-1),
+        torch.stack([2 * (x * y + w * z), 1 - 2 * (x * x + z * z), 2 * (y * z - w * x)], dim=-1),
+        torch.stack([2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y)], dim=-1),
+    ]
+    return torch.stack(rows, dim=-2)
+
+
+def _world_boxes(asset, bodies: list[str], centres, halves, quats):
+    """World-frame centre, quat and half extent for every part, shapes (N, P, ...)."""
+    ids = _body_ids(asset)
+    index = torch.tensor([ids[b] for b in bodies], device=centres.device)
+    body_pos = asset.data.body_pos_w[:, index]
+    body_quat = asset.data.body_quat_w[:, index]
+    local_c = centres.to(body_pos.device).unsqueeze(0).expand_as(body_pos)
+    world_c = body_pos + _quat_apply(body_quat, local_c)
+    local_q = quats.to(body_pos.device).unsqueeze(0).expand_as(body_quat)
+    world_q = _quat_mul(body_quat, local_q)
+    return world_c, world_q, halves.to(body_pos.device)
+
+
+def _box_corners(centre, quat, half):
+    """(..., 8, 3) corners of oriented boxes."""
+    shape = centre.shape[:-1]
+    local = (_CORNERS.to(centre.device) * half.unsqueeze(-2)).expand(*shape, 8, 3)
+    rotated = _quat_apply(quat.unsqueeze(-2).expand(*shape, 8, 4), local)
+    return centre.unsqueeze(-2) + rotated
+
+
+def _point_box(points, centre, quat, half):
+    """(..., P, 3) points against oriented boxes -> (..., P) unsigned distance."""
+    shape = points.shape[:-1]
+    conj = _quat_conjugate(quat).unsqueeze(-2).expand(*shape, 4)
+    rel = points - centre.unsqueeze(-2)
+    local = _quat_apply(conj, rel)
+    outside = (local.abs() - half.unsqueeze(-2)).clamp(min=0.0)
+    return torch.linalg.norm(outside, dim=-1)
+
+
+def _segment_distance(p1, q1, p2, q2):
+    """Unsigned distance between two segments, elementwise (Ericson, *Real-Time Collision
+    Detection*, with the parallel case resolved by projection instead of a fixed s=0)."""
+    d1 = q1 - p1
+    d2 = q2 - p2
+    r = p1 - p2
+    a = (d1 * d1).sum(-1).clamp(min=1e-12)
+    e = (d2 * d2).sum(-1).clamp(min=1e-12)
+    f = (d2 * r).sum(-1)
+    c = (d1 * r).sum(-1)
+    b = (d1 * d2).sum(-1)
+    den = a * e - b * b
+    parallel = den <= 1e-12
+    s_gen = ((b * f - c * e) / den.clamp(min=1e-12)).clamp(0.0, 1.0)
+    s = torch.where(parallel, ((-c) / a).clamp(0.0, 1.0), s_gen)
+    t = (b * s + f) / e
+    # Ericson's fix-ups, evaluated on the *unclamped* t
+    below = t < 0.0
+    above = t > 1.0
+    s = torch.where(below, ((-c) / a).clamp(0.0, 1.0), s)
+    t = torch.where(below, torch.zeros_like(t), t)
+    s = torch.where(above, ((b - c) / a).clamp(0.0, 1.0), s)
+    t = torch.where(above, torch.ones_like(t), t)
+    s = torch.where(parallel, ((-c) / a).clamp(0.0, 1.0), s)
+    t = torch.where(parallel, ((b * s + f) / e).clamp(0.0, 1.0), t)
+    return torch.linalg.norm((p1 + d1 * s.unsqueeze(-1)) - (p2 + d2 * t.unsqueeze(-1)), dim=-1)
+
+
+def _vertex_box_distance(centre_a, quat_a, half_a, centre_b, quat_b, half_b):
+    """Closest vertex/face approach: exact whenever the closest features are a vertex and a
+    face, which is what two parallel links facing each other always produce."""
+    corners_a = _box_corners(centre_a, quat_a, half_a)
+    corners_b = _box_corners(centre_b, quat_b, half_b)
+    return torch.minimum(
+        _point_box(corners_a, centre_b, quat_b, half_b).amin(-1),
+        _point_box(corners_b, centre_a, quat_a, half_a).amin(-1),
+    ).clamp(min=0.0)
+
+
+def _edge_distance(centre_a, quat_a, half_a, centre_b, quat_b, half_b):
+    """Closest edge/edge approach -- the only case the vertex stage cannot see."""
+    corners_a = _box_corners(centre_a, quat_a, half_a)
+    corners_b = _box_corners(centre_b, quat_b, half_b)
+    lead = corners_a.shape[:-2]
+    p1 = corners_a[..., _EDGES[:, 0], :].unsqueeze(-2).expand(*lead, 12, 12, 3).reshape(*lead, 144, 3)
+    q1 = corners_a[..., _EDGES[:, 1], :].unsqueeze(-2).expand(*lead, 12, 12, 3).reshape(*lead, 144, 3)
+    p2 = corners_b[..., _EDGES[:, 0], :].unsqueeze(-3).expand(*lead, 12, 12, 3).reshape(*lead, 144, 3)
+    q2 = corners_b[..., _EDGES[:, 1], :].unsqueeze(-3).expand(*lead, 12, 12, 3).reshape(*lead, 144, 3)
+    return _segment_distance(p1, q1, p2, q2).amin(-1).clamp(min=0.0)
+
+
+def _exact_distance(centre_a, quat_a, half_a, centre_b, quat_b, half_b):
+    """Distance between oriented boxes: 0 when they overlap, else the closest approach.
+
+    The feature search (vertices against faces, edges against edges) answers "how far apart",
+    not "do they intersect": two boxes can overlap in a cross with no vertex inside the other
+    and every edge-edge pair at a positive distance, which is exactly the wrist-into-chassis
+    case. The axis bound is negative only when nothing separates the boxes, so it is what
+    makes the zero unambiguous -- measured in ``check_clearance_proxy.py``: without it the
+    proxy reported up to 16 mm of clearance between overlapping boxes.
     """
-    protected = PROTECTED_BOXES if protected is None else protected
+    feature = torch.minimum(
+        _vertex_box_distance(centre_a, quat_a, half_a, centre_b, quat_b, half_b),
+        _edge_distance(centre_a, quat_a, half_a, centre_b, quat_b, half_b),
+    )
+    bound = _separation_bound(centre_a, quat_a, half_a, centre_b, quat_b, half_b)
+    return torch.where(bound < 0.0, torch.zeros_like(feature), feature)
+
+
+def _separation_bound(centre_a, quat_a, half_a, centre_b, quat_b, half_b):
+    """Largest gap over the 15 candidate axes -- never larger than the true distance.
+
+    Each axis is a direction the pair *could* be separated along, so the projection gap along
+    it is a lower bound on the distance; when the boxes overlap every gap is <= 0 and so is the
+    bound. That makes it useful as a filter (and safe as a fallback): it can understate the
+    clearance, never invent one. It is exact whenever the closest features are faces.
+    """
+    ra = _quat_to_matrix(quat_a)  # (..., 3, 3), columns are the box axes
+    rb = _quat_to_matrix(quat_b)
+    axes_a = ra.transpose(-1, -2)
+    axes_b = rb.transpose(-1, -2)
+    cross = torch.cross(axes_a.unsqueeze(-2), axes_b.unsqueeze(-3), dim=-1).reshape(*axes_a.shape[:-2], 9, 3)
+    axes = torch.cat([axes_a, axes_b, cross], dim=-2)
+    norm = torch.linalg.norm(axes, dim=-1, keepdim=True)
+    valid = norm.squeeze(-1) > 1e-3
+    unit = axes / norm.clamp(min=1e-9)
+    d = (centre_b - centre_a).unsqueeze(-2)
+    gap = (d * unit).sum(-1).abs()
+    gap = gap - (unit @ ra).abs().mul(half_a.unsqueeze(-2)).sum(-1)
+    gap = gap - (unit @ rb).abs().mul(half_b.unsqueeze(-2)).sum(-1)
+    return torch.where(valid, gap, torch.full_like(gap, -1e6)).amax(-1)
+
+
+def _pair_distances(asset, cap: float) -> torch.Tensor:
+    """(N, P) distance for every pair, exact wherever it can matter.
+
+    ``cap`` is the range anyone cares about: a pair further apart than that is reported at the
+    cap, so the full evaluation only runs for the configurations where it can change the
+    answer. The value is the box distance except for pairs the vertex stage settled without
+    the edge pass, where it can be optimistic by ``EDGE_TOLERANCE`` -- 2 mm, an order below the
+    margin, against a box model that is 8-17 mm conservative.
+
+    Three stages, because the full evaluation is the expensive one: an axis-separation lower
+    bound for everything, the vertex/face distances only where the bound says the pair is
+    below the cap, and the 144 edge/edge pairs only where the two disagree by enough to matter
+    (a face-to-face approach -- the usual case for parallel links -- is already exact).
+    """
     device = asset.data.body_pos_w.device
-    centres, radii, _, _ = _assemble_spheres(asset, base_body_name)
+    arm_c, arm_q, arm_h = _world_boxes(asset, ARM_BODY_LIST, ARM_CENTRES, ARM_HALVES, ARM_QUATS)
+    prot_c, prot_q, prot_h = _world_boxes(asset, PROT_BODY_LIST, PROT_CENTRES, PROT_HALVES, PROT_QUATS)
 
-    best = torch.full((centres.shape[0],), cap, device=device)
-    for name, (centre, half) in protected.items():
-        box_centre = torch.tensor(centre, device=device).unsqueeze(0)
-        half_t = torch.tensor(half, device=device).unsqueeze(0)
-        outside = (centres - box_centre.unsqueeze(1)).abs() - half_t.unsqueeze(1)
-        dist = torch.linalg.norm(outside.clamp(min=0.0), dim=-1) - radii
-        skip = SPHERE_SKIP.get(name)
-        if skip is not None:
-            dist = dist.masked_fill(skip.to(device).unsqueeze(0), cap)
-        best = torch.minimum(best, dist.amin(dim=-1))
-    return best.clamp(max=cap)
+    self_index = torch.tensor(SELF_PAIRS, dtype=torch.long, device=device)
+    sens_index = torch.tensor(SENSOR_PAIRS, dtype=torch.long, device=device)
+    n = arm_c.shape[0]
+    ca = torch.cat([arm_c[:, self_index[:, 0]], arm_c[:, sens_index[:, 0]]], dim=1)
+    qa = torch.cat([arm_q[:, self_index[:, 0]], arm_q[:, sens_index[:, 0]]], dim=1)
+    ha = torch.cat(
+        [
+            arm_h[self_index[:, 0]].unsqueeze(0).expand(n, -1, -1),
+            arm_h[sens_index[:, 0]].unsqueeze(0).expand(n, -1, -1),
+        ],
+        dim=1,
+    )
+    cb = torch.cat([arm_c[:, self_index[:, 1]], prot_c[:, sens_index[:, 1]]], dim=1)
+    qb = torch.cat([arm_q[:, self_index[:, 1]], prot_q[:, sens_index[:, 1]]], dim=1)
+    hb = torch.cat(
+        [
+            arm_h[self_index[:, 1]].unsqueeze(0).expand(n, -1, -1),
+            prot_h[sens_index[:, 1]].unsqueeze(0).expand(n, -1, -1),
+        ],
+        dim=1,
+    )
+
+    raw = _separation_bound(ca, qa, ha, cb, qb, hb)
+    lower = raw.clamp(max=cap)
+    near = lower < cap
+    if not bool(near.any()):
+        return lower
+    rows, cols = near.nonzero(as_tuple=True)
+    lower_near = lower[rows, cols]
+    near_a = (ca[rows, cols], qa[rows, cols], ha[rows, cols])
+    near_b = (cb[rows, cols], qb[rows, cols], hb[rows, cols])
+    vertex = _vertex_box_distance(*near_a, *near_b)
+    value = lower.clone()
+    value[rows, cols] = vertex.clamp(max=cap)
+    # where the face-to-face answer sits on the bound the vertex stage is already exact;
+    # where it does not, the closest features may be edges and only the full pass knows
+    ambiguous = (vertex - lower_near).abs() > EDGE_TOLERANCE
+    if bool(ambiguous.any()):
+        pick = ambiguous.nonzero(as_tuple=True)[0]
+        edges = _edge_distance(*(t[pick] for t in near_a), *(t[pick] for t in near_b))
+        target = rows[pick], cols[pick]
+        value[target] = torch.minimum(value[target], edges)
+    # nothing separates the boxes -> they overlap, whatever the feature search said
+    return torch.where(raw < 0.0, torch.zeros_like(value), value)
 
 
-def arm_self_clearance(asset, base_body_name: str = "base_link", cap: float = 0.5):
-    """Per-environment minimum distance between non-adjacent arm spheres."""
-    device = asset.data.body_pos_w.device
-    centres, radii, _, _ = _assemble_spheres(asset, base_body_name)
-    diff = centres.unsqueeze(2) - centres.unsqueeze(1)
-    dist = torch.linalg.norm(diff, dim=-1) - radii.unsqueeze(0) - radii.unsqueeze(1)
-    mask = SELF_PAIR_MASK.to(device)
-    dist = torch.where(mask.unsqueeze(0), dist, torch.full_like(dist, cap))
-    return dist.amin(dim=(1, 2)).clamp(max=cap)
+def clearance(asset, cap: float = 0.15) -> torch.Tensor:
+    """(N, P) distance of every watched pair, metres. Zero means the boxes overlap."""
+    return _pair_distances(asset, cap)
 
 
-def total_clearance(asset, cap: float = 0.5, include_self: bool = True):
+def cached_clearance(env, asset, cap: float = 0.15) -> torch.Tensor:
+    """`clearance`, computed once per environment step.
+
+    The reward and the metrics ask the same question in the same step; without this they pay
+    for it twice and can disagree if anything moves between the two calls.
+    """
+    step = int(env.common_step_counter)
+    cache = getattr(env, "_clearance_cache", None)
+    if cache is not None and cache[0] == step:
+        return cache[1]
+    value = clearance(asset, cap)
+    env._clearance_cache = (step, value)
+    return value
+
+
+def _is_structural(a: str, b: str) -> bool:
+    return (a, b) in STRUCTURAL or (b, a) in STRUCTURAL
+
+
+def _penalty_columns() -> list[int]:
+    """Columns the reward looks at: every pair except the structural ones."""
+    columns = []
+    for k, (i, j) in enumerate(SELF_PAIRS):
+        if not _is_structural(ARM_BODY_LIST[i], ARM_BODY_LIST[j]):
+            columns.append(k)
+    for k, (i, p) in enumerate(SENSOR_PAIRS):
+        if not _is_structural(ARM_BODY_LIST[i], PROT_GROUPS[p]):
+            columns.append(len(SELF_PAIRS) + k)
+    return columns
+
+
+PENALTY_COLUMNS = _penalty_columns()
+
+
+def penalty_clearance(env, asset, cap: float = 0.15) -> torch.Tensor:
+    """Per-environment minimum over the pairs the reward is allowed to act on (m)."""
+    return cached_clearance(env, asset, cap)[:, PENALTY_COLUMNS].amin(-1)
+
+
+def _self_columns() -> list[int]:
+    return list(range(len(SELF_PAIRS)))
+
+
+def _sensor_columns() -> list[int]:
+    return list(range(len(SELF_PAIRS), len(SELF_PAIRS) + len(SENSOR_PAIRS)))
+
+
+def arm_self_clearance(asset, cap: float = 0.15) -> torch.Tensor:
+    """Per-environment minimum distance between non-adjacent arm parts (m)."""
+    return clearance(asset, cap)[:, _self_columns()].amin(-1)
+
+
+def arm_sensor_clearance(asset, cap: float = 0.15) -> torch.Tensor:
+    """Per-environment minimum distance between the arm and the protected parts (m)."""
+    return clearance(asset, cap)[:, _sensor_columns()].amin(-1)
+
+
+def total_clearance(asset, cap: float = 0.15, include_self: bool = True) -> torch.Tensor:
     """Minimum of the sensor clearance and (optionally) the arm's own self clearance."""
-    d = arm_clearance(asset, cap=cap)
+    d = arm_sensor_clearance(asset, cap)
     if include_self:
-        d = torch.minimum(d, arm_self_clearance(asset, cap=cap))
+        d = torch.minimum(d, arm_self_clearance(asset, cap))
     return d
 
 
-def sensor_clearance_penalty(env, asset_cfg, margin: float = 0.02, cap: float = 0.5, include_self: bool = True):
-    """Reward term: zero while clear, rising quadratically as the arm closes in.
+def clearance_summary(env, asset, cap: float = 0.15) -> dict[str, torch.Tensor]:
+    """Named minima, so one number cannot hide which pair is closing.
 
-    The reference is the clearance the robot has at the *start of the episode*, not an
-    absolute number. The proxy is deliberately conservative (spheres circumscribe the links,
-    the chassis is a box around a rounded body), so in absolute terms the shoulder sits about
-    16 mm "inside" a 20 mm margin at the authored pose and a plain margin would penalise
-    standing still. Measuring the loss of clearance relative to the starting posture keeps the
-    signal about what the policy does, and `check_clearance_proxy.py` reports the remaining
-    bias against MuJoCo's exact geometry.
+    These are logged next to the tracking metrics and computed from the same tensor the
+    reward uses, so a drop here and a drop in the reward are the same event.
+    """
+    d = cached_clearance(env, asset, cap)
+    out = {"self": d[:, _self_columns()].amin(-1), "sensor": d[:, _sensor_columns()].amin(-1)}
+    for label, (name_a, name_b) in WATCHED_SELF.items():
+        columns = [
+            k for k, (i, j) in enumerate(SELF_PAIRS) if {ARM_BODY_LIST[i], ARM_BODY_LIST[j]} == {name_a, name_b}
+        ]
+        if columns:
+            out[label] = d[:, columns].amin(-1)
+    for group in WATCHED_SENSOR:
+        columns = [len(SELF_PAIRS) + k for k, (_, b) in enumerate(SENSOR_PAIRS) if PROT_GROUPS[b] == group]
+        if columns:
+            out[f"sensor_{group}"] = d[:, columns].amin(-1)
+    return out
 
-    ``margin`` is where the penalty starts, not a hard constraint -- the arm may still enter
-    it, it just pays. A convex quadratic gives a direction to move in before anything touches;
-    a step at contact gives none until it is too late.
+
+def sensor_clearance_penalty(env, asset_cfg, margin: float = 0.02, cap: float = 0.15):
+    """Reward term: zero while clear, rising quadratically inside ``margin``.
+
+    The margin is **absolute**, in metres, against the geometry the physics model carries.
+    Until 4.11 it was relative to the clearance at the start of the episode, because the proxy
+    was conservative enough that the shoulder sat "inside" any honest margin at the authored
+    pose -- a workaround for a broken table, not a design. With the table built from the model
+    that bias is gone, so a fixed distance is what the task asks for and what the policy can
+    learn against: a number in metres, the same in every episode.
+
+    A convex quadratic gives a direction to move in before anything touches; a step at contact
+    gives none until it is too late. ``margin`` is where the penalty starts, not a hard
+    constraint -- the arm may still enter it, it just pays.
+
+    Two things keep the term from penalising a pose that is actually fine. The box proxy is a
+    *lower* bound on the mesh distance -- measured 8-17 mm conservative at the authored pose --
+    so a 20 mm margin here is roughly 30 mm of real clearance, and that bias is reported by
+    ``check_clearance_proxy.py`` rather than absorbed silently. And the pairs in
+    :data:`STRUCTURAL` are left out: they are close by construction and no action changes them.
     """
     asset = env.scene[asset_cfg.name]
-    d = total_clearance(asset, cap=cap, include_self=include_self)
-    ref = getattr(env, "_sensor_clearance_ref", None)
-    if ref is None:
-        ref = d.detach().clone()
-        env._sensor_clearance_ref = ref
-    excess = (margin - (d - ref)).clamp(min=0.0) / margin
+    d = penalty_clearance(env, asset, cap)
+    excess = (margin - d).clamp(min=0.0) / margin
     return -(excess**2)

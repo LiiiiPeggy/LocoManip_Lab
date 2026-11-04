@@ -291,6 +291,21 @@ SERIES_SPECS: tuple[SeriesSpec, ...] = (
         primary=False,
         legend_label="4.10f (10000)",
     ),
+    # 4.11 fine-tunes 4.10f's model_9999 against the corrected self-collision distance and an
+    # absolute safety margin. It loads the weights only -- fresh optimiser, iteration 0 -- so it
+    # is a new series rather than a continuation of the same curve.
+    SeriesSpec(
+        key="4.11",
+        label="4.11 (safety fine-tune)",
+        stage="4.11",
+        segments=(RunSegment("stage411_ppo"),),
+        cumulative_base=33000,
+        color=VIOLET,
+        status="running",
+        init_note="4.10f `model_9999`, actor/critic only: fresh optimiser, iteration counter at 0",
+        note="Reward change only: the safety term now sees the arm's own pairs, with an absolute margin.",
+        legend_label="4.11 (3500)",
+    ),
 )
 
 KL_REFERENCE_SPEC = SeriesSpec(
@@ -339,6 +354,10 @@ METRICS: tuple[MetricSpec, ...] = (
     MetricSpec("Metrics/ee_pose/success", "success", "Success rate", show_switches=True, rate=True),
     MetricSpec("Metrics/ee_pose/collision", "collision", "Collision rate", rate=True),
     MetricSpec("Metrics/ee_pose/min_clearance", "clearance", "Minimum clearance [m]", hline=0.0),
+    MetricSpec("Metrics/ee_pose/clearance_self", "clearance_self", "Arm self clearance [m]", hline=0.0),
+    MetricSpec(
+        "Metrics/ee_pose/clearance_Link3_Link5", "clearance_link3_link5", "Link3-Link5 clearance [m]", hline=0.0
+    ),
     MetricSpec("Curriculum/ee_pose_levels", "curriculum_stage", "EE-pose curriculum stage", step=True),
     MetricSpec("Curriculum/lin_vel_cmd_levels", "lin_vel_level", "Linear-velocity command level", step=True),
     MetricSpec("Curriculum/ang_vel_cmd_levels", "ang_vel_level", "Angular-velocity command level", step=True),
@@ -361,6 +380,8 @@ DASHBOARD_SLUGS = (
     "ee_orientation",
     "collision",
     "clearance",
+    "clearance_self",
+    "clearance_link3_link5",
     "curriculum_stage",
     "lin_vel_level",
     "ang_vel_level",

@@ -37,9 +37,31 @@ parser.add_argument(
 parser.add_argument("--seed", type=int, default=None, help="Seed used for the environment")
 parser.add_argument("--max_iterations", type=int, default=None, help="RL Policy training iterations.")
 parser.add_argument(
+    "--save_interval",
+    type=int,
+    default=None,
+    help=(
+        "Override the checkpoint interval (stage 4.11: a run that dies inside a PPO update every few "
+        "hundred iterations needs a usable checkpoint closer than 500 iterations, otherwise every "
+        "restart loses the same work)"
+    ),
+)
+parser.add_argument(
     "--distributed", action="store_true", default=False, help="Run training with multiple GPUs or nodes."
 )
 parser.add_argument("--export_io_descriptors", action="store_true", default=False, help="Export IO descriptors.")
+parser.add_argument(
+    "--load_weights_only",
+    action="store_true",
+    default=False,
+    help=(
+        "With --resume, load only the actor and critic weights: start a new run at iteration 0 with a "
+        "fresh optimiser, learning-rate schedule and iteration counter. Stage 4.11 uses this to fine-tune "
+        "4.10's model_9999 against a changed safety reward, where restoring 4.10's optimiser moments and "
+        "iteration count would carry over both the old objective's curvature and the epoch the previous "
+        "run blew up in."
+    ),
+)
 parser.add_argument(
     "--ray-proc-id", "-rid", type=int, default=None, help="Automatically configured by Ray integration, otherwise None."
 )
@@ -129,6 +151,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     agent_cfg.max_iterations = (
         args_cli.max_iterations if args_cli.max_iterations is not None else agent_cfg.max_iterations
     )
+    if getattr(args_cli, "save_interval", None):
+        agent_cfg.save_interval = args_cli.save_interval
 
     # handle deprecated configurations
     agent_cfg = handle_deprecated_rsl_rl_cfg(agent_cfg, installed_version)
@@ -218,8 +242,13 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     # load the checkpoint
     if agent_cfg.resume or agent_cfg.algorithm.class_name == "Distillation":
         print(f"[INFO]: Loading model checkpoint from: {resume_path}")
-        # load previously trained model
-        runner.load(resume_path)
+        if args_cli.load_weights_only:
+            load_cfg = {"actor": True, "critic": True, "optimizer": False, "iteration": False}
+            print("[INFO]: --load_weights_only: actor/critic only, iteration counter reset to 0")
+            runner.load(resume_path, load_cfg=load_cfg)
+        else:
+            # load previously trained model
+            runner.load(resume_path)
 
     # dump the configuration into log-directory
     dump_yaml(os.path.join(log_dir, "params", "env.yaml"), env_cfg)

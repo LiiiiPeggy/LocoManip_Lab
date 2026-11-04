@@ -36,9 +36,11 @@ from .base_vel import (  # noqa: F401
 )
 from .pose_command_world import UniformPoseWorldCommand  # noqa: F401
 from .safety import (  # noqa: F401
-    arm_clearance,
     arm_self_clearance,
+    arm_sensor_clearance,
+    clearance_summary,
     sensor_clearance_penalty,
+    total_clearance,
 )
 from .tcp import (  # noqa: F401
     TCP_ANCHOR_BODY,
