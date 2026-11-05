@@ -217,6 +217,28 @@ each, holding ~18 GB of the GPU between them and slowing every later run. `ps` s
 `R` with a large `TIME`. Kill by PID when a finished run's log already says what it was going to say;
 `pkill -f <pattern>` is not safe here because the pattern matches the shell issuing it.
 
+## The MuJoCo collision hull is a loose *shape* but a faithful *interface* (2026-11-05)
+
+Two measurements that look contradictory and are not:
+
+- as a shape, each link's convex hull is far from its mesh -- sampling the hull surface and taking
+  the distance to the mesh gives a median of 13-19 mm and up to 60 mm on Link2, Link3 and the lidar
+  (`measure_hull_overfill.py`);
+- where two links actually come closest, the hull and the mesh agree to a median of **-0.2 mm**
+  (`validate_distance_reference.py`, 242 samples under 50 mm).
+
+So "the hull over-fills the mesh by 20 mm" is true about the hull's concavities and false about the
+approach direction the robot actually uses. The error that matters for a proximity reward is the
+second number, and it is small.
+
+The consequence for the proxy search: the box cover was **-17 to -22 mm** from the mesh at the
+median and -32 mm at p95 on the same poses, i.e. an order of magnitude worse than the hull it was
+standing in for. Fixing the cover (GJK on the hulls) buys more than tightening the boxes.
+
+Also measured: GJK against MuJoCo on the *same* hulls agrees to 0.000 mm at `tol=1e-8` (median
++0.1 mm, max 2.9 mm at the default `tol=1e-4` -- that is the convergence tolerance, not a bug).
+Keep the two error sources apart: algorithm error is zero, geometry error is the hull-vs-mesh gap.
+
 ## Where the design is documented
 
 - `PROJECT_INTRO.md` — the deep description: observation/action space, every reward term and weight,

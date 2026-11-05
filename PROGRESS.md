@@ -517,6 +517,21 @@ Artifacts (each verified by loading/playing it back, not by exit code):
    implemented): a guard that skips the update and rolls back instead of letting
    `torch.normal(std < 0)` end the process.
 
+   **Stage 4.13 (2026-11-05) audited the reference geometry and built a distance baseline.** No
+   training was run. The audit pins the three sources apart: MuJoCo 3.13.0 with margin 0 and no
+   enable flags, 52 collision geoms over 9 Isaac groups, **36 pairs of which 31 are checked and 30
+   enter the reward** (five parent/child pairs excluded by MuJoCo, the structural pair checked but
+   not rewarded), and hashes for the poses, models and checkpoint. The convex hull is a loose *shape*
+   -- 13-19 mm from the mesh at the median, up to 60 mm on the lidar -- but a faithful *interface*:
+   where two links actually come closest the hull and mesh differ by **-0.2 mm median**. The box
+   proxy on the same poses is **-17 to -22 mm median, -32 mm at p95**, so the 4.11/4.12 "false
+   alarms" were the cover's fault, not the simulator's. A GJK prototype on the same hulls matches
+   `mj_geomDistance` to **0.000 mm** at `tol=1e-8`, so algorithm error and geometry error are now
+   separated and measurable. Convex decomposition is justified by the shape measurement but was not
+   completed: `trimesh` here has neither shapely nor rtree, and the fidelity metric that works
+   around it had not finished by the end of the stage -- reported as not run, not as passed. The GPU
+   path and the 1/64/512/2048 performance table are also not done; CPU GJK measures 0.18 ms per pair.
+
    Two runs' worth of instability to record: `rsl_rl` died inside a PPO update at iterations 1402,
    1209 and 2037 with value loss 3 -> 1e14 -> inf -> `normal(std < 0)`, environment metrics healthy
    throughout -- the same failure as 4.10e at 9336, but now every 200-1000 iterations. Checkpoints
