@@ -172,6 +172,51 @@ Related trap: this machine **suspends intermittently**. `ps etime` and the run's
 `Time elapsed` do not include the suspended time, so "2 h 10 m elapsed" and six hours of calendar
 time can both be true. Trust checkpoints and log lines, not clock arithmetic.
 
+## A union of bounding boxes cannot be both tight and conservative (2026-11-05)
+
+Measured on the same 1800 operating poses each time (`scripts/ranger_cr10/check_proxy_operating.py`,
+`analyze_proxy_pairs.py`), with the false-alarm share, the distance error inside the last 20 mm, and
+the share of real contacts the proxy misses:
+
+| representation | false-alarm steps | band error median | misses |
+|---|---|---|---|
+| one box per link | 45.9% | -8.5 mm | 0% |
+| four slabs per link | 38.3% | - | 0% |
+| lidar as 16 radial sectors | 43.2% | - | 0% |
+| 6 oriented-box clusters | 33.0% | -3.5 mm | **6.3%** |
+| 6 clusters, 2-overlap | 50.8% | - | 0% |
+| 6 clusters, +3 mm inflate | 49.1% | - | 1.4% |
+| 16 clusters | 18.9% | +2.7 mm | 7.8% |
+
+The reason is geometric, not a tuning miss: the mesh surface between two clusters lies inside
+neither box, so a box cover is *either* tight (and optimistic at contact) *or* conservative (and
+loose everywhere). An exact distance needs a real convex decomposition plus GJK, not a better box.
+
+Two things this cost, worth not repeating: the false alarms dominated by the **lidar** (Link6-lidar
+24.4%, Link5-lidar 12.5%, Link4-lidar 7.7%, Link3-lidar 7.6% of operating steps), not by Link2 as an
+earlier ad-hoc script claimed; and PCA-oriented boxes can be *larger* than the axis-aligned ones on
+thin curved shells, so a per-cluster orientation has to be chosen by volume, not assumed.
+
+## A runner built outside hydra must call `handle_deprecated_rsl_rl_cfg` (2026-11-05)
+
+`train.py` goes through hydra, which migrates the legacy `stochastic` key into `distribution_cfg`.
+A standalone script that builds `OnPolicyRunner` from `RangerCr10TeleopPPORunnerCfg().to_dict()`
+without that call dies in `MLPModel.__init__() got an unexpected keyword argument 'stochastic'` --
+and Isaac's `close()` swallows it, so the run looks like a hang with no message at all (see the
+exit-code section above). Call it explicitly:
+
+    agent_cfg = handle_deprecated_rsl_rl_cfg(agent_cfg, metadata.version("rsl-rl-lib"))
+
+and print a traceback before `simulation_app.close()` in any script whose failure would otherwise be
+invisible.
+
+## A run stuck in `simulation_app.close()` keeps its GPU memory (2026-11-05)
+
+Three diagnostic runs finished writing their output and then sat in `close()` for 500+ minutes of CPU
+each, holding ~18 GB of the GPU between them and slowing every later run. `ps` showed them in state
+`R` with a large `TIME`. Kill by PID when a finished run's log already says what it was going to say;
+`pkill -f <pattern>` is not safe here because the pattern matches the shell issuing it.
+
 ## Where the design is documented
 
 - `PROJECT_INTRO.md` — the deep description: observation/action space, every reward term and weight,
@@ -205,6 +250,13 @@ time can both be true. Trust checkpoints and log lines, not clock arithmetic.
   *position* clamp (which was correctly signed) and never the attitude step size or the negative
   side. A clamp test has to assert the step size and both signs at both ends -- "the value stopped
   changing" passes for a degenerate box.
+
+- **An analysis script that labels columns by their enumerate index (found 2026-11-05).**
+  A throwaway script iterated `enumerate(PENALTY_COLUMNS)` and then used the *enumerate index* to look
+  up which body pair a column belonged to. The counts were right and every label was shifted, so the
+  4.11 report blamed `Link2 <-> lidar_link0` for 9.2% of false alarms that actually belonged to other
+  pairs. If a number is going to be attributed to a name, look the name up by the column id, and
+  re-derive it a second way before it reaches a report.
 
 - **A command sampler that aliases one tensor across axes (found 2026-10-29).**
   `torch.stack([r.uniform_(lo, hi) for ...])` looks like three draws and is one: `Tensor.uniform_`

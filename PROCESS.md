@@ -226,3 +226,46 @@ contact), but spheres along a link's axis do not cover the flat faces that graze
 this class of self-contact is invisible to the training signal. Extending the run to 10 000
 iterations would improve tracking; it would not remove that contact. Fixing it needs a box-to-box
 distance (or a finer sphere set for those pairs) and therefore a separate training run.
+
+## 5. Stage 4.12: why no training was started, and what the geometry can and cannot do
+
+Stage 4.11 failed for a reason that took a while to see properly: the safety penalty was firing on
+nearly half of nominal operating steps, so the policy bought a two-point contact reduction with a
+48-point accuracy loss. The user's 4.12 brief set a gate -- the proxy had to be validated before any
+further safety training -- and the honest outcome is that **it did not pass, so nothing was trained**.
+
+### What was measured, in the order it mattered
+
+1. **The attribution was wrong first.** An ad-hoc script from 4.11 blamed `Link2 <-> lidar_link0` for
+   the false alarms; it had used an `enumerate` index where a column index was meant, so every label
+   was shifted. Written properly (`analyze_proxy_pairs.py`), the lidar still dominates, but through
+   `Link6`, `Link5`, `Link4` rather than `Link2`. A number that will be attributed to a name has to be
+   looked up by the id, and derived twice before it goes into a report.
+2. **Four representations, one measurement harness.** Every candidate was scored on the same 1800
+   configurations a real policy visits (`check_proxy_operating.py`), not on random samples: random
+   configurations made slab-splitting look like a 28% -> 9.5% improvement that turned out to be
+   55.4% -> 47.8% on the poses that matter.
+3. **The best-looking candidate was unsound.** Six oriented-box clusters cut the false alarms to 33%
+   and the near-contact error to -3.5 mm, and missed 6.3% of real contacts. The union of boxes covers
+   the vertices but not the surface between clusters, so tightness and coverage trade directly against
+   each other. Every variant that restored coverage (overlap, inflation) went back to 49-51% false
+   alarms, i.e. no better than the single box it was meant to replace.
+
+### The decision
+
+No safety PPO run was started, `model_9999` stays deployed, and the next attempt should attack the
+*distance* rather than the *bounding volume*: convex decomposition into 4-8 pieces per link plus an
+exact convex-convex distance. That is a bigger piece of engineering than a better fit, and the
+measurement harness is already in place to judge it.
+
+### The critic blow-up, which is a separate matter
+
+Both diagnostic arms (full restore and weights-only, 400 iterations each, from the checkpoint the
+training side died on five times) ran **without reproducing it**: targets and predictions stayed at
+8.6-9.7e1, pre-clipping gradients at or below 1.5e2, value loss at or below 9.7. Every condition that
+can be restored matches, so the blow-up does not follow from the checkpoint -- it depends on the run's
+data stream. What is established is one amplifier: the timeout bootstrap writes `gamma * V ~ 93` into a
+single-step reward, so a divergent value estimate is immediately amplified. The practical fix is a
+guard that skips the update and rolls back on a non-finite loss, instead of letting
+`torch.normal(std < 0)` end the process; that was recommended and deliberately not implemented during
+a measurement stage.
