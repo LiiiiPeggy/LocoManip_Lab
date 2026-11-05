@@ -227,9 +227,15 @@ Two measurements that look contradictory and are not:
 - where two links actually come closest, the hull and the mesh agree to a median of **-0.2 mm**
   (`validate_distance_reference.py`, 242 samples under 50 mm).
 
+And one measurement that overrides both: at the six configurations where the Link3/Link5 **hulls**
+report contact (penetration -0.2 to -0.5 mm), the triangle meshes are **30.3 mm apart** (verified with
+every vertex, not a subset). The hulls touch while the links do not. Every "real contact" counted in
+stages 4.11 and 4.12 was of that kind, which is why a policy told to avoid it gave up 48 points of
+tracking accuracy to dodge a gap of 30 mm.
+
 So "the hull over-fills the mesh by 20 mm" is true about the hull's concavities and false about the
 approach direction the robot actually uses. The error that matters for a proximity reward is the
-second number, and it is small.
+third number, and it is the one that decides whether to touch the reward at all.
 
 The consequence for the proxy search: the box cover was **-17 to -22 mm** from the mesh at the
 median and -32 mm at p95 on the same poses, i.e. an order of magnitude worse than the hull it was
