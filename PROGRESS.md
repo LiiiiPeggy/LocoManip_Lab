@@ -498,6 +498,25 @@ Artifacts (each verified by loading/playing it back, not by exit code):
    drops that to 9.5% and the bias to -5.3 mm; that is the next version's starting point, to be
    validated offline before any further training.
 
+   **Stage 4.12 pre-flight (2026-11-05): the geometry did not pass, so no training was started.**
+   Four representations were measured on the same 1800 operating poses: one box per link (45.9%
+   false-alarm steps, band error -8.5 mm, 0 misses), four slabs (38.3%), the lidar as 16 radial
+   sectors (43.2%), 6 oriented-box clusters (33.0%, band error -3.5 mm, **6.3% dangerous misses**),
+   6 clusters with overlap/inflation (49-51%, 0 misses) and 16 clusters (18.9%, +18.7 mm tail).
+   A union of boxes cannot be tight and conservative at once -- the mesh surface between two
+   clusters lies inside neither box -- so nothing met the "<=3 mm with no misses" gate. The next
+   step is an exact distance (convex decomposition + GJK), not a tighter box. The per-pair
+   attribution from the previous entry was also wrong (an ad-hoc script labelled columns by their
+   enumerate index); measured properly the lidar dominates: Link6-lidar 24.4%, Link3-Link5 19.1%,
+   Link5-lidar 12.5%, Link4-Link6 11.2%.
+   The critic blow-up was attacked from both arms: full restore and weights-only, 400 iterations
+   each from `model_2800`, **neither reproduced it** (targets and predictions 8.6-9.7e1, gradients
+   <=1.5e2 before clipping, value loss <=9.7). The training crash therefore does not follow from
+   the checkpoint -- it depends on the run's data stream -- and the only established amplifier is
+   the timeout bootstrap writing `gamma*V ~ 93` into a single-step reward. Recommended (not
+   implemented): a guard that skips the update and rolls back instead of letting
+   `torch.normal(std < 0)` end the process.
+
    Two runs' worth of instability to record: `rsl_rl` died inside a PPO update at iterations 1402,
    1209 and 2037 with value loss 3 -> 1e14 -> inf -> `normal(std < 0)`, environment metrics healthy
    throughout -- the same failure as 4.10e at 9336, but now every 200-1000 iterations. Checkpoints
