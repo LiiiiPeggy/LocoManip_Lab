@@ -68,6 +68,13 @@ ap.add_argument(
 )
 ap.add_argument("--stop_on_nonfinite", action="store_true", default=True)
 ap.add_argument(
+    "--no_debug_vis",
+    action="store_true",
+    default=False,
+    help="turn the command markers off. Off by default: the training config ships them ON, and a "
+    "reproduction that quietly changes a scene setting is not a reproduction",
+)
+ap.add_argument(
     "--reward_terms",
     action="store_true",
     default=False,
@@ -219,8 +226,8 @@ def main() -> None:
     env_cfg = RangerCr10TeleopEnvCfg()
     env_cfg.scene.num_envs = args.num_envs
     env_cfg.seed = args.seed
-    # the command markers cost more than the rollout at 2048 envs and change nothing being measured
-    env_cfg.commands.ee_pose.debug_vis = False
+    if args.no_debug_vis:
+        env_cfg.commands.ee_pose.debug_vis = False
     env = gym.make(args.task, cfg=env_cfg)
     env = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
     log_dir = Path(args.log_dir or "logs/rsl_rl/ranger_cr10_teleop/_stage411_diag")
