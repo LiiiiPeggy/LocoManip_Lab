@@ -91,7 +91,7 @@ import LeggedManip_Lab.tasks  # noqa: E402,F401
 from rsl_rl.algorithms.ppo import PPO  # noqa: E402
 from rsl_rl.runners import OnPolicyRunner  # noqa: E402
 
-from isaaclab_rl.rsl_rl import RslRlVecEnvWrapper  # noqa: E402
+from isaaclab_rl.rsl_rl import RslRlVecEnvWrapper, handle_deprecated_rsl_rl_cfg  # noqa: E402
 from LeggedManip_Lab.tasks.manager_based.leggedmanip_lab.config.ranger_cr10.agents.rsl_rl_ppo_cfg import (  # noqa: E402
     RangerCr10TeleopPPORunnerCfg,
 )
@@ -137,7 +137,10 @@ def compute_returns(self, obs):  # noqa: ANN001 - wrapped method
 
 def update(self):  # noqa: ANN001 - wrapped method
     STATE["iteration"] += 1
-    STATE["last_record"] = {"iteration": STATE["iteration"], "grad_norm": None, "grad_nonfinite": 0}
+    # keep what `compute_returns` recorded for this iteration; only add the update half
+    STATE.setdefault("last_record", {}).update(
+        {"iteration": STATE["iteration"], "grad_norm": None, "grad_nonfinite": 0}
+    )
     out = _orig_update(self)
     STATE["last_record"]["loss"] = {k: float(v) for k, v in (out or {}).items()} if isinstance(out, dict) else {}
     peaks = {k: float(v) for k, v in STATE.pop("term_peak", {}).items()} if STATE.get("term_peak") else {}
@@ -203,6 +206,12 @@ def instrument_reward_terms(env) -> None:
 
 def main() -> None:
     agent_cfg = RangerCr10TeleopPPORunnerCfg()
+    # train.py does this through hydra; without it the legacy `stochastic` key survives into
+    # `to_dict()` and rsl-rl >= 5 rejects it when it builds the actor (TypeError, swallowed by
+    # Isaac's close() -- which is why the first attempts looked like a hang with no message).
+    import importlib.metadata as metadata
+
+    agent_cfg = handle_deprecated_rsl_rl_cfg(agent_cfg, metadata.version("rsl-rl-lib"))
     agent_cfg.seed = args.seed
     agent_cfg.max_iterations = args.iterations
     agent_cfg.device = "cuda:0"

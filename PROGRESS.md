@@ -482,8 +482,12 @@ Artifacts (each verified by loading/playing it back, not by exit code):
    reference), self pairs included, structural pair excluded, self/sensor and per-pair clearance
    logged separately.
 
-   Fine-tuned from `model_9999` with a fresh optimiser (`--load_weights_only`) for 2000 of the
-   planned 3500 iterations. **It did not pass acceptance and `model_9999` stays deployed**: real
+   Fine-tuned from `model_9999` with a fresh optimiser (`--load_weights_only`). The run stopped at
+   **2800 of the planned 3500**: every restart from `model_2800` died within three minutes inside a
+   PPO update (`value loss 3 -> 1e14 -> inf -> normal(std < 0)`), so the supervisor spent its five
+   attempts without making progress. Checkpoints 500/1000/1500/2000/2200/2400/2600/2800 all verify
+   finite. Accuracy plateaus after 1500 (50 mm/5 deg 17-23%, 30 mm/2 deg 0% from 2000 on) while
+   real contact hovers at 7-9%. **It did not pass acceptance and `model_9999` stays deployed**: real
    contact went 10.0% -> 7.0% (target was <1%) while 50 mm/5 deg fell 68.3% -> 21.7% and 30 mm/2 deg
    28.3% -> 0.0%, with the minimum clearance getting *worse* (7 mm -> 1 mm). Per-target analysis
    shows the contact comes from 8 targets that are collision-free reachable (the 4 unreachable ones
