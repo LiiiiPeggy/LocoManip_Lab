@@ -3,8 +3,8 @@
 A snapshot, not a log. Delete what is no longer true; do not append history here (that is
 PROCESS.md). Do not record unverified conclusions.
 
-**Last verified: 2026-10-25** — every claim below was produced by re-running the command on this
-machine, unless marked otherwise.
+**Last verified: 2026-11-07 for stage 4.13b/radar; earlier claims retain the date of their own stage.**
+Every claim below was produced by re-running the command on this machine, unless marked otherwise.
 
 ## Current objective
 
@@ -517,6 +517,157 @@ Artifacts (each verified by loading/playing it back, not by exit code):
    implemented): a guard that skips the update and rolls back instead of letting
    `torch.normal(std < 0)` end the process.
 
+   **Stage 4.13b0 (2026-11-06) rebuilt the reference distance and re-tested the tooling.** The 4.13
+   reference took a minimum of vertex-to-surface distances in both directions, which reports ~90 mm
+   for two boxes crossing at their centres and cannot distinguish contact from separation. It is now
+   an exact triangle-triangle distance (point-face plus edge-edge, 15 features) with a separate
+   intersection test and a winding-number containment test, pruned by a provable radius bound rather
+   than a k-nearest-centroid guess. Eight analytic cases pass, including the three from the brief
+   (crossing boxes 0.000 vs the old 90.0 mm; the same pair offset 25 mm gives exactly 5.000 mm; the
+   large-triangle-vs-centroids case 1.000 vs the old 118 mm), plus a brute-force cross-check over 20
+   random mesh pairs at 0.000000 mm disagreement. FCL could not be installed (the conda-forge channel
+   is unreachable here), so the independent check is exhaustive enumeration, not FCL. The asset audit
+   shows the STLs are vertex soups; after welding Link3/4/5/6 are closed but the gripper base and the
+   lidar are not, so containment for those reports "unknown" rather than guessing. Replaying the six
+   anomaly poses with the rebuilt reference gives the stage's answer: **0 real contacts, 6 hull
+   phantoms** -- the hulls penetrate by 0.4 mm while the meshes are 30.2 mm apart -- and the box proxy
+   fires there too (0.0 mm), so it was never the hull alone. The full 1800-step sweep was not run: the
+   exact reference costs 10-30 s per pair in pure Python, which is itself a reason the 4.13b
+   vectorised implementation is needed before a threshold sweep can be validated.
+   The index work brought that cost down (Link3-Link5: 12.8 s -> 1.9 s, 21.6 s -> 2.7 s, identical
+   distances) and the attribution now carries a proper confusion matrix: over the six anomalies both
+   proxies are TP 0 / FP 6 / FN 0 / TN 6 against the mesh reference, so the earlier "the box proxy had
+   zero false alarms" sentence was wrong and is corrected to "zero *box-only* false alarms". The
+   48-point accuracy loss is no longer stated as caused by the box proxy -- it was not isolated.
+
+   **Stage 4.13b (2026-11-06) validated the first convex-decomposition candidate on an independent
+   boundary set and did not approve it.** The frozen candidate is Link3 5 pieces / Link5 13 pieces;
+   its actual CoACD parameter is **relative threshold 0.02, real_metric=False** (the script recorded
+   `real_metric=True` but never forwarded it; all 18 npz files are byte-identical to the earlier
+   relative run). The set has 12 full-FK C clusters and 8 rigid-transform B families, 346 rows, all
+   distance bins decided by the corrected mesh reference. First, the reference itself had to be
+   fixed: the double-precision triangle intersection called **47/360** separated pairs intersecting
+   (exact rational arithmetic: 0 false negatives); the old "2 overlap misses" and the §27.10 "pass"
+   were that bug. After the exact fix, the corrected set finds **51 true overlaps, 51 detected, 0
+   missed**, and 14 numerically uncertain-band samples reported separately. Accuracy splits sharply:
+   C-only |e| P95 **1.58 mm** (max 1.68), B-only **3.17 mm** (max 3.89). Overall 0-20 mm P95 is
+   **1.65 mm**, but the **3-5 mm bin P95 is 3.73 mm > 3 mm**, driven by four B2_2 samples localised to
+   `cr10_Link3_p3 | cr10_Link5_p8`. The first overfill numbers were wrong: the analysis script used
+   `contains=True` (inside) as "outside", so "p8 5.876 mm" and "p3 38.5 mm" were **inside** distances
+   and are retracted. With the corrected flag, p8's outside overfill is 353/400 points at P95/max
+   **1.13/1.32 mm** (0 >3 mm), while p3's is 157/400 at **4.02/5.31 mm** (24 >3 mm): the dominant
+   side is **Link3 p3**, not Link5 p8.
+   Coverage is incomplete: 5/12 C clusters (C04/C05/C08/C09/C10) never reach near-contact or
+   overlap (minima 7.4-16.0 mm). False contacts are conservative: 70/275 separated samples, all 0-1
+   mm gaps, FP 4.3% at a 5 mm margin and 2.1% at 10 mm, FN 0. No GJK or reference query failed.
+
+   **Stage 4.13b local correction (2026-11-06) fixed the Link3 side and passed the fixed and
+   holdout sets.** Old Link3 p3 was replaced by 50 original-mesh pieces selected from a 2 mm
+   `merge=False` decomposition (4 old + 50 = 54 pieces / 2907 vertices; p3-region coverage max
+   0.078 mm; whole-Link3 overfill P95 1.56 mm, max 2.40 mm). Link5 stayed at the old 13 pieces.
+   Fixed-set result: **3-5 mm P95 1.64 mm** (was 3.73), B 1.54 (was 3.17), C 1.58, overall 1.54,
+   51/51 overlaps, 0 misses, 0 unknown, A 0/0. The 2x2 comparison is decisive **within these four candidates and the dev anomalies**: Link5-only leaves
+   B2_2 at -3.89 mm; Link3-only drops it to -0.92 mm; both sides add 810 pairs and no benefit.
+   Query cost 702 pairs, median 0.071 s (old 65 pairs, ~0.015 s).
+   The pre-fixed holdout (seed 20261106, 317 rows, 12 new C clusters, 8 B families) gives 3-5 mm
+   P95 1.58, C/B 1.60/1.42, 26/26 overlaps, 0 misses, 0 unknown, A 0/0. Coverage is short of the
+   target: **9 C clusters with true overlap cumulative** (dev 7 + holdout 2), not 10; the holdout
+   did not reproduce the dev p3 overfill, so it confirms no regression rather than independently
+   reproducing the gain.
+   **Stage 4.13b close (2026-11-06) checked the reference trigger, the seam, a targeted C cluster
+   and a small radar baseline.** The 0.5 mm near-zero trigger is an acceleration heuristic, not a
+   conservative condition; the final reference now tests every AABB-overlapping triangle pair with
+   the exact predicate. Dev 346 / holdout 317 rows: **0 label changes, 0 distance changes**; AABB /
+   exact-test medians 9.5/7 and 56/56, maxima 1572/1251; reference median 7.26/8.49 s, wall 259/272 s
+   with 10 workers. The candidate results therefore share the same labels and were not recomputed.
+   The seam sample (857 faces, 500 points) has observed gap P95 0.0446 mm, max 0.0745 mm, 0 above
+   0.10 mm; this is an observation, not a strict no-gap proof. The targeted C-cluster search was
+   **not found within budget** (3000 joint samples, 52 new-region seeds, 30 reference seed
+   evaluations, 8 seeds x 3 directions x 12-point paths, plus a 12-query gradient search): the top
+   seeds have reference 1.5-3.4 mm but the candidate is already in contact at s=0, and their Link3
+   witness is ~39 mm outside the old p3 hull (new piece p33 boundary). Cumulative true-overlap C
+   clusters remain **9**, not 10; the stage-close "new targeted config" condition is not met.
+   **Radar cap/2x2 re-audit (2026-11-07).** The earlier five-pose result mixed a cap value with an
+   exact d_ref and mixed the 0 mm and 20 mm thresholds; it is marked superseded, not overwritten.
+   The corrected reference returns **1 exact** (pose 1538, Link3<->lidar, 48.876 mm) and **28
+   certified_culled** rows with `lower_bound=threshold=0.05 m`; unknown 0. The lower bound is valid
+   for the 0/20 mm classification, but no exact median/P95 or nearest point is claimed from culled
+   rows. Welded containment: 29 rows / 49 constituent checks, 0 flagged; raw-STL containment remains
+   unknown. On 29 valid alarm rows (five poses + four extra by a pre-fixed rule), the 2x2 gives:
+   A arm box+radar box **11 contact FP / 16 margin FP**; B arm hull+radar box **7 / 10**;
+   C arm box+radar hull **0 / 0**; D arm hull+radar hull **0 / 0**. The **lidar/radar box is the
+   dominant false-alarm source**, the arm box contributes less, and replacing only the radar box
+   with the radar hull removes the original proxy's **11 contact and 16 margin false alarms**
+   **in these 29 valid samples**. All 29 reference distances are at least ~48.9 mm, so this
+   supports far-distance attribution only, not near-contact precision or miss detection. The
+   earlier "arm-side box" conclusion is retracted.
+   The main-pair change is a **proxy-table version difference**: the deployed built-in safety.py
+   table flags Link2/Link3; the external `collision_boxes(_{s4}).json` tables flag Link5/Link6, on
+   the same 1800 poses and model, so the two are reported separately and their percentages are not
+   compared. The old scan's Link6 last-column overwrite and the old `PRIORITY` omission of Link1/2
+   are recorded. The next minimal task is to use the existing **lidar mesh convex hull** as the
+   offline lidar-pair baseline (arm box + radar hull, C), validate it on a pre-fixed larger
+   alarm/near-contact set, and not tighten boxes, generate radar decomposition assets or start PPO.
+   (This task was completed on 2026-11-07; the result is **neither C nor D**, see the following
+   paragraph.)
+   `model_9999` remains the deployment policy. The C-cluster search correction is recorded: a
+   reference-separated seed is a valid start even if the candidate is conservatively in contact at
+   s=0; no extra search budget was spent this round. Artifacts: `radar_2x2/`,
+   `radar_cap_semantics.json`, `radar_main_pair_audit.json`, `radar_alarm_scan_corrected.json`,
+   `radar_alarm_scan_tables.json`, `radar_containment_audit.json`; candidate freeze
+   `freeze_link3_L5_20261106.json`.
+   **Radar replay + independent near-contact validation (2026-11-07).** The full 1800-pose x
+   6-pair replay is **10800/10800 pair-steps, 0 missing**: reference 37 exact (min 40.538 mm),
+   10763 certified_culled at 50 mm, 0 failed/unknown, 0 contacts, so the run-distribution miss
+   rate is **N/A**. A still has **192 contact / 379 margin false alarms** at pair-step level
+   (166/298 per pose); C and D have **0/0**, and A->C/A->D remove all 192/379 with no new alarms.
+   This is far-distance improvement only: no reference row is below 20 mm. The pre-fixed near set
+   (seed 20261108, 50k joint samples, 342 reference rows: 248 exact, 94 culled, 0 failed, 80
+   overlaps) shows the near-contact answer is different: A/C/D contact TP/FP/FN/TN =
+   81/226/0/35, 81/114/0/147, 81/20/0/241; 20 mm margin FP = 139/105/43. Exact separated error
+   P95 is A 26.71, C 25.11, D 19.60 mm; D passes most 0-5 mm rows but fails 5-20 mm (Link2
+   5-10/10-20 9.25/12.44 mm; Link3 6.40/15.28 mm; Link4/5/6 also >3 mm), and C fails Link3 3-5 mm
+   at 3.43 mm. All three detect **80/80 overlaps**, 0 misses, 0 unknown. Coverage gaps are
+   recorded, not padded: Link2 0-5 mm has no sample, Link6 0-3 mm has none, Link1 has no near
+   sample. **Choice: neither C nor D satisfies the 3 mm per-bin near-contact requirement; D is
+   better than C but still fails.** A reference bug was found and fixed: `closest_to_in_frame`
+   containment tested untransformed guest vertices; 342 near labels had **0 changes** (80 contacts
+   all surface, 0 containment), the 1800 replay has 0 contacts, a full reference-only recheck of all 10800 replay rows after the fix gives 0 label changes, and the candidate holdout has 26
+   surface contacts, 0 containment; only the hybrid attribution v1 was invalid (8 false
+   `lidar_hull_only`), marked superseded. Corrected attribution: C's false contacts are the arm
+   box; D's residual error is mixed (6 arm-hull-dominant, 3 lidar-hull-dominant, 3 small, on 12
+   representative rows). Next minimal task: local arm Link2/3 patch, plus a local lidar patch only
+   for the lidar-hull-dominant rows, validated on the same near set/replay; no global decomposition,
+   no box tightening, no PPO, candidate unchanged. Artifacts: `radar_replay/`,
+   `radar_near_contact/v2/`, `radar_near_contact_rule.json`,
+   `radar_geometry_coverage_audit.json`, `failure_attribution_v1_SUPERSEDED.json`.
+   **Radar MM/HM/MH/HH attribution + minimal candidate (2026-11-07).** A new frozen round
+   directory (`outputs/stage413/b/radar_round2_2026_11_07/`) records code/geometry/pose/near-set/
+   replay hashes and separates strict surface intersection, complete containment, clearance <=0.10 mm
+   (1 row) and clearance >0.10 mm (261): **80 strict surface overlaps and 81 tolerance positives**
+   are kept as separate denominators; raw non-watertight containment is unknown, not separation.
+   All **111 exact separated rows with MM-D >3 mm** were attributed (57 rows <=3 mm listed as
+   excluded): MM/HM/MH/HH per row, winners, witnesses, monotonic checks (0 violations), HH vs D
+   max 0.018 mm. Side counts: Link2 **45/45 arm**, Link3 **13 arm / 10 radar**, Link4
+   **12 radar / 2 arm**, Link5 **13 radar / 2 arm**, Link6 **14/14 radar**; total 62 arm / 49 radar.
+   The shared radar loss justified one minimal candidate: the single lidar global hull replaced by
+   95 per-component convex hulls (54 watertight, 41 non-watertight, 48 degenerate kept; no component
+   deleted; all 1271 piece vertices inside the old hull). Files, parameters, hashes and mapping are
+   in `candidate_lidar_v1/`. Sampled coverage max 0.049 mm; unsigned overfill P95/max
+   2.16/22.15 mm (inside/outside unknown), watertight-component outside P95/max 8.15/51.14 mm
+   (41 non-watertight components unknown); this is a sampled observation. On the fixed 342-row set
+   the candidate changes 80 strict / 81 tolerance / 190 margin TP to FP 10/14/28 (D: 12/20/43),
+   exact P95 16.69 mm (D 19.60), with 0 FN; on the new 187-row holdout (seed 20261109, 187/500
+   refs) 36/36/95 TP, FP 8/9/17 (D 10/11/31), P95 12.65 mm (D 17.29). Link5 and Link6 pass the
+   holdout 0-20 mm bins; Link6 also passes dev; Link2, Link3 10-20 and Link4 10-20 still fail;
+   Link5 dev 3-5/5-10 (3.11/3.94) are just over. Coverage gaps remain: dev Link2 0-5, Link6 0-3,
+   Link1 no near; holdout Link2 0-1, Link6 0-3, Link3/4/5 0-5. The candidate is **local success,
+   overall not passing**; Link2 is arm-side and was not patched. 1800 replay: component-aware
+   reference recheck 10800 rows **0 changes**; D min 40.12 mm and candidate >=D, so **0 new
+   alarms**. Containment regression (rotation/translation, swapped, same transform, multi-component,
+   non-watertight unknown) passes; 342 and 10800 labels unchanged. No PPO, no deployment asset, no
+   commit/push; `model_9999`, `M agx`, Link3<->Link5 candidate unchanged.
+
    **Stage 4.13 (2026-11-05) audited the reference geometry and built a distance baseline.** No
    training was run. The audit pins the three sources apart: MuJoCo 3.13.0 with margin 0 and no
    enable flags, 52 collision geoms over 9 Isaac groups, **36 pairs of which 31 are checked and 30
@@ -658,6 +809,23 @@ Artifacts (each verified by loading/playing it back, not by exit code):
    `convert_mimic_joints_to_normal_joints` must be **true** here (the AG95 has 7 mimic joints, and
    `false` leaves them as free hinges), and the USD's limits are in **degrees** on both platforms.
    The source meshes were decimated first: 83 MB / 1.73 M faces → 19 MB / 0.38 M faces.
+
+   **Simple arm collision + independent Isaac self-collision (2026-11-07).** A test-only candidate
+   (`RANGER-CR10-TELEOP-SIMPLECOLL`, flat `ranger_cr10_simple_flat.usd`) replaces Link1--6 with one
+   box each and gives box_link two solid colliders (left enclosure + right plate); box_link is
+   merged into base_link but its colliders remain and follow the base. The default config, USD,
+   `safety.py` and frozen assets are untouched. The visual/physical simple boxes are documented in
+   `simple_boxes.json`; the old A reward proxy is still the old table and has no box_link, so the
+   layers differ explicitly. Self-collisions are actually enabled on the imported articulation and
+   77 filtered pairs cover chassis/adjacent arm/gripper assemblies. Local blocking works: slow
+   approach to the box left enclosure (on pair distance -0.026 mm vs off -24.3 mm) and non-adjacent
+   Link3↔Link6 (on +9.74 mm vs off -21.7 mm) are stopped. **Global stability fails**: default hold
+   with self on moves the base 0.182 m (off 0.029), small sinusoidal motion produces ~189 kN and
+   0.193 m, and box approach moves the base 0.8 m. The plate target stops 69.9 mm early and is
+   confounded, not a clean pass. The new simple distance proxy removes all 379 far A margin false
+   alarms but misses **4 true Link3 path overlaps** (P0021--P0024), so it is not yet a reward
+   proxy. Verdict: local blocking yes, validation/parallel tests/training no; fix filtering/initial
+   overlap and Link3 box coverage first.
 
 ## Known minor documentation drift (verify before editing docs)
 

@@ -76,20 +76,40 @@ class MeshDistance:
         self.faces = np.asarray(faces, dtype=np.int64)
         self.k = min(k, len(self.faces))
         self.tree = cKDTree(self.vertices[self.faces].mean(axis=1))
+        triangles = self.vertices[self.faces]
+        self.max_radius = float(np.linalg.norm(triangles - triangles.mean(axis=1)[:, None, :], axis=2).max())
 
-    def distance(self, points: np.ndarray, chunk: int = 20000) -> np.ndarray:
+    def _evaluate(self, point: np.ndarray, triangles: np.ndarray) -> float:
+        query = np.repeat(point[None, :], len(triangles), axis=0)
+        closest = closest_point_on_triangles(
+            query, self.vertices[triangles[:, 0]], self.vertices[triangles[:, 1]], self.vertices[triangles[:, 2]]
+        )
+        return float(np.linalg.norm(closest - query, axis=-1).min())
+
+    def distance(self, points: np.ndarray, chunk: int = 4096) -> np.ndarray:
+        """Nearest distance from each point to the surface.
+
+        Candidate selection is a *provable* bound, not a fixed k: once an upper bound U is known, any
+        triangle closer than U has its centroid within ``U + max_circumradius`` of the point, so a ball
+        query at that radius cannot miss it. A centroid KNN with k = 128 can and does -- a single large
+        triangle whose centroid is 100 mm away can be the 1 mm answer.
+        """
         points = np.asarray(points, dtype=np.float64).reshape(-1, 3)
         out = np.empty(len(points))
         for start in range(0, len(points), chunk):
             block = points[start : start + chunk]
-            _, index = self.tree.query(block, k=self.k)
-            triangles = self.faces[index]  # (P, k, 3)
-            a = self.vertices[triangles[..., 0]]
-            b = self.vertices[triangles[..., 1]]
-            c = self.vertices[triangles[..., 2]]
-            query = np.repeat(block[:, None, :], self.k, axis=1)
-            closest = closest_point_on_triangles(query, a, b, c)
-            out[start : start + chunk] = np.linalg.norm(closest - query, axis=-1).min(axis=1)
+            _, index = self.tree.query(block, k=min(self.k, len(self.faces)))
+            index = np.atleast_2d(index)
+            if index.shape[0] != len(block):
+                index = index.T
+            for row in range(len(block)):
+                candidates = set(int(v) for v in index[row])
+                best = self._evaluate(block[row], self.faces[sorted(candidates)])
+                radius = best + self.max_radius
+                ball = set(int(v) for v in self.tree.query_ball_point(block[row], radius))
+                if not ball <= candidates:
+                    best = min(best, self._evaluate(block[row], self.faces[sorted(ball)]))
+                out[start + row] = best
         return out
 
     def signed_outside(self, points: np.ndarray) -> np.ndarray:

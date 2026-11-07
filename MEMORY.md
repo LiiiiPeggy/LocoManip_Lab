@@ -245,6 +245,24 @@ Also measured: GJK against MuJoCo on the *same* hulls agrees to 0.000 mm at `tol
 +0.1 mm, max 2.9 mm at the default `tol=1e-4` -- that is the convergence tolerance, not a bug).
 Keep the two error sources apart: algorithm error is zero, geometry error is the hull-vs-mesh gap.
 
+## A vertex-to-surface minimum is not a distance (2026-11-06)
+
+The stage-4.13 reference took the min over both directions of vertex-to-triangle distances. Two boxes
+with perpendicular long axes and coincident centres come out at **90 mm**; the answer is zero, and the
+same pair offset by 25 mm reads 90.1 mm against a true 5 mm. A centroid KNN with k = 128 has the
+mirror-image failure: one large triangle whose centroid is far can be the 1 mm answer and gets
+dropped (measured 118 mm).
+
+The fixes are small and worth keeping: enumerate the 15 features (point-face and edge-edge), test
+intersection separately from distance (tangency is also zero), test containment by winding number (a
+closed body inside another has no surface intersection), and prune with a *provable* radius bound
+(any triangle closer than the current best has its centroid within best + max circumradius). The
+pruned query then agrees with brute force to 0.000000 mm over 20 random mesh pairs.
+
+Two asset facts this turned up: the STLs are vertex soups (every triangle carries its own vertices,
+so an index-sharing closedness test fails on a good mesh -- weld before judging), and even welded, the
+gripper base and the lidar are **not closed**, so their containment is unknown rather than false.
+
 ## Where the design is documented
 
 - `PROJECT_INTRO.md` — the deep description: observation/action space, every reward term and weight,
@@ -415,3 +433,114 @@ Keep the two error sources apart: algorithm error is zero, geometry error is the
   env was wrong: a single return of the wrong magnitude fed the critic, and every later parameter is
   downstream of it. Resume from the last saved checkpoint (9000 here), keep the crashed log, and
   treat "value loss rising for a few hundred iterations" as the warning that precedes it.
+
+- **A recorded CoACD flag is not a forwarded flag (2026-11-06).** `run_coacd(..., real_metric=False)`
+  defaults to a *relative* threshold; `decompose_coacd.py` wrote `real_metric=True` into its manifest
+  but never passed it to the call, and the 18 output npz files were byte-identical to the earlier
+  relative run. A directory named `metric20` is not evidence of a 20 mm threshold. When a generator
+  records parameters, verify they are in the call, not only in the metadata; the frozen candidate is
+  relative threshold 0.02, not metres.
+- **The double-precision triangle-triangle intersection is not trustworthy for near-parallel
+  triangles (2026-11-06).** Its interval comparison uses an absolute `EPS = 1e-12` on projected
+  coordinates whose scale is set by a tiny `cross(n1, n2)`; on the Link3/Link5 meshes it called
+  **47 of 360** separated pairs intersecting. Exact rational arithmetic (`Fraction(float)`) gives
+  the stored-coordinate answer and is fast enough for the ambiguous pairs. The false positives had
+  produced two "candidate overlap misses" and a premature "candidate passes" conclusion; both were
+  retracted. Audit the reference itself before using it to reject a candidate.
+- **Convex-decomposition pieces can protrude outside the mesh they were cut from, and the sign of
+  the containment test matters (2026-11-06).** A convex piece is a hull of a point cluster, not a
+  subset of the surface. With `outside = contains(point) is False`, Link5 p8 has 353/400 sampled
+  surface points outside the source mesh but only by P95/max 1.13/1.32 mm; Link3 p3 has 157/400
+  outside at 4.02/5.31 mm (24 >3 mm). The first version of the sampling script used
+  `contains(point) is True` as the outside flag and reported 5.876 mm (p8) and 38.5 mm (p3); those
+  were **inside** points and were retracted. The dominant overfill was Link3 p3, not Link5 p8, and
+  a local replacement of p3 with original-mesh pieces cut the 3-5 mm error from 3.89 to 0.92 mm.
+  This is a conservative error (the candidate reports a smaller gap, never a missed contact) but it
+  breaks a 3 mm accuracy criterion and creates false contacts in the 0-5 mm bins. Weld the STL
+  before the winding-number containment test: the raw vertex soup fails the closed-mesh test even
+  though the geometry is closed.
+
+- **A near-zero distance is not a conservative intersection trigger (2026-11-06).** The old
+  reference called the exact triangle predicate only when the 15-feature distance was <0.5 mm. A
+  true intersection can have a larger closest-feature distance (long thin triangles crossing at
+  their interiors), and the 0.5 mm value has no proof. The final reference uses a conservative
+  triangle-AABB candidate screen inside every visited BVH leaf pair and runs the exact predicate on
+  all AABB-overlapping pairs; the positive-distance path is kept only for distance/acceleration.
+  BVH pruning itself is safe for a true intersection (distance 0 gives a node lower bound <=0), but
+  the leaf-level trigger was not. Re-running dev 346 / holdout 317 with the AABB screen gives
+  **0 label and 0 distance changes**; the exact tests are 7/56 median, 1572/1251 max, and the
+  reference median rises to 7.26/8.49 s. Do not use the 0.5 mm heuristic to certify "no contact".
+- **The old box proxy's lidar alarms are box-only phantoms, and the 2x2 points at the radar box
+  (2026-11-07).** On 1800 operating poses the deployed built-in safety table flags Link2<->lidar
+  (166 contact / 298 at the 0.02 m reward margin), Link3 (26/50), Link1 (0/29) and Link5 (0/2);
+  the external `collision_boxes(_{s4}).json` tables flag Link5/Link6 instead. The two are different
+  proxy versions on the same poses/model, so their percentages must be compared only within a
+  version. A 2x2 on 29 alarm rows (arm box/hull x radar box/hull) gives A 11/16 false positives,
+  B 7/10, **C and D 0/0** (contact/margin): the **lidar box is the dominant source**, the arm box
+  contributes less, and replacing only the radar box with the radar hull removes the original
+  proxy's **11 contact and 16 margin false alarms in these 29 valid samples**. All 29 reference
+  distances are at least ~48.9 mm, so this is far-distance attribution only, not near-contact
+  precision or miss detection. The earlier "arm-side box" conclusion is retracted. Alarm-selected
+  proportions are not run-distribution rates.
+- **Radar replay and the independent near-contact set disagree with the far-only conclusion
+  (2026-11-07).** The full 1800-pose x 6-pair replay is 10800/10800, 0 missing: A is 192 contact /
+  379 margin false alarms (166/298 per pose), C/D are 0/0, and A->C/A->D remove all 192/379 with no
+  new alarms. The reference has 37 exact rows (min 40.538 mm), 10763 certified_culled at 50 mm, 0
+  contacts and 0 failed; miss rate is N/A, so this is far-distance evidence only. On the pre-fixed
+  342-row near set (248 exact, 94 culled, 0 failed, 80 surface overlaps; coverage gaps: Link2
+  0-5 mm, Link6 0-3 mm, Link1 no near) C and D still fail: contact FP C 114 / D 20, margin FP C
+  105 / D 43, exact-separated error P95 C 25.11 / D 19.60 mm. D passes most 0-5 mm rows but fails
+  5-20 mm (Link2 9.25/12.44 mm, Link3 6.40/15.28 mm); C fails Link3 3-5 mm at 3.43 mm. All detect
+  80/80 overlaps, 0 misses. **Choice: neither C nor D meets the 3 mm per-bin requirement; D is
+  better but not sufficient.** The next minimal task is a local Link2/3 arm patch plus a local
+  lidar patch only for the three lidar-hull-dominant rows, not a global decomposition; the
+  Link3<->Link5 candidate remains frozen.
+- **`closest_to_in_frame` containment used untransformed guest vertices (fixed 2026-11-07).**
+  `_containment` tested the guest's raw first vertex against the host mesh without applying the
+  query's rigid transform, producing false containment contacts for meshes in different frames.
+  The fix transforms the guest vertex into the host frame. Audit: 342 near-set labels had **0
+  changes** (the 80 contacts are all surface intersections, 0 containment); the 1800 replay has 0
+  contacts and a full 10800-row reference-only recheck gives 0 label changes; the candidate holdout has 26 surface contacts and 0 containment. Only the v1 hybrid
+  failure attribution was invalid (8 false `lidar_hull_only`); it is marked superseded. The
+  corrected classification is 4 `both_hulls` + 12 `arm_box_only`; D's error side is mixed (6
+  arm-hull, 3 lidar-hull, 3 small on 12 diagnostic rows).
+- **MM/HM/MH/HH says the radar hull is shared, but Link2 is arm-side (2026-11-07).** On all
+  111 exact separated rows with MM-D >3 mm, the single-side gains separate the cause: Link2 45/45
+  arm, Link3 13 arm / 10 radar, Link4 12 radar / 2 arm, Link5 13 radar / 2 arm, Link6 14/14 radar.
+  The four distances use the same transform, atoms and union-min; monotonic violations 0; HH vs D
+  max 0.018 mm; the single-side gains do not add (Link4 interaction ~2.44 mm). A minimal radar-side
+  candidate (single lidar hull replaced by 95 per-component convex hulls, all components kept, old
+  hull removed) passes Link6 0-20 on dev+holdout and Link5 0-20 on the holdout, partially fixes
+  Link3/4, and does not fix Link2. Fixed-set strict/tolerance/margin FP go 12/20/43 -> 10/14/28;
+  holdout 36/36/95 TP, FP 10/11/31 -> 8/9/17; all 80/81 (dev) and 36/36 (holdout) positives are
+  retained, FN 0. Candidate overfill is sampled: coverage max 0.049 mm; watertight-component outside
+  P95/max 8.15/51.14 mm, 41 components unknown. **Local success, overall not passing.**
+- **The labels must keep strict surface, complete containment, tolerance contact and far clearance
+  separate (2026-11-07).** The dev near set has 80 strict surface overlaps, 0 observed complete
+  containment, 1 clearance <=0.10 mm, 261 >0.10 mm; this gives 80 and 81 as two legitimate
+  denominators. A 1e-4 m "0 mm" table must not be called strict; raw STLs are not watertight, so
+  complete containment is unknown for those hosts, not separation. The containment implementation
+  now tests one point per connected component and flags non-watertight hosts unknown; regression
+  cases include rotation+translation, swapped query, same transform, multi-component and
+  non-watertight host, all pass. Component-aware containment changed 0 labels on the 342 near rows
+  and 0 on the 10800 replay rows; the holdout has 36 surface contacts, 0 containment. The radar
+  candidate is not a deployment asset and the Link3<->Link5 candidate is untouched.
+- **`max_clearance` results are certified lower bounds, not exact distances (2026-11-07).** When
+  the traversal proves the distance is at least the cap, the result is `certified_culled` with
+  `lower_bound` and `threshold`; the cap must not be stored as `d_ref`, used for an exact-distance
+  median/P95, or used to claim a nearest point. In the 29 radar rows: 1 exact (48.876 mm), 28
+  certified culled at lower bound 0.05 m, 0 unknown. The 50 mm lower bound is valid for the 0/20 mm
+  classification; welded containment (29 rows, 49 constituent checks) found 0 cases, while raw-STL
+  containment remains unknown.
+- **Simple arm collision boxes + box_link: local blocking works, global self-collision does not (2026-11-07).**
+  The test-only `RANGER-CR10-TELEOP-SIMPLECOLL` env uses a flat USD with one box per arm Link1--6 and
+  two box_link colliders (left enclosure + right mounting plate; the single AABB would engulf the arm
+  base). box_link is merged into base_link but its collision survives and follows the base. The default
+  TELEOP-WBC config, USD, `safety.py` reward proxy and frozen assets are untouched, so the old A proxy
+  still has no box_link. Self-collisions are actually enabled on the imported articulation; 77 filtered
+  pairs cover chassis/adjacent arm/gripper assemblies. Local blocking works (box-lid approach: on
+  -0.026 mm pair distance vs off -24.3 mm; non-adjacent Link3<->Link6: on +9.74 mm vs off -21.7 mm),
+  but global stability fails: self-on hold moves the base 0.182 m (off 0.029), small sinusoidal motion
+  gives ~189 kN and 0.193 m, and the plate target is confounded. The new simple distance proxy removes
+  all 379 far A margin false alarms but misses 4 true Link3 path overlaps (P0021--P0024), so it is not
+  a reward proxy and the candidate is not ready for parallel tests or training. See plan section 35.

@@ -56,6 +56,18 @@ gym.register(
     },
 )
 
+# Independent test candidate: simplified arm boxes + solid box_link collision, self-collisions ON.
+# Do not use as the default deployment; it exists for physical collision validation only.
+gym.register(
+    id="RANGER-CR10-TELEOP-SIMPLECOLL",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.simple_collision_env_cfg:RangerCr10TeleopSimpleCollisionEnvCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:RangerCr10TeleopPPORunnerCfg",
+    },
+)
+
 gym.register(
     id="RANGER-CR10-TELEOP-WBC-Play",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
