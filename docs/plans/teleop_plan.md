@@ -4940,3 +4940,228 @@ Link5/Link6 的已验证局部基线保留。继续使用本固定集/留出集�
 ### 35.6 结论
 
 第一版简化盒在**局部**能阻止 box_link 与非相邻臂杆穿透, 但**全局自碰撞稳定性不通过**, 新距离代理也**漏 4 个真实交叠**, 因此**不满足进入小规模并行测试或训练的条件**。默认 `model_9999`、默认 TELEOP-WBC、`safety.py`、冻结资产均未改; 未启动 PPO、未集成部署、未提交/推送。下一步先处理自碰撞过滤/初始重叠和 Link3 盒覆盖, 再决定是否放宽/调整盒长。
+
+## 36. SIMPLECOLL 第二轮: 关节退让几何、box_link 两实体盒与自碰撞失稳定位(2026-11-07)
+
+### 36.1 先纠正上一轮的三处测量错误
+
+本轮先复核 §35 的结论, 发现三处会把“测量假象”写成“物理失败”的错误; §35 保留为历史, 以本节为准。
+
+1. **v1 的 ~189--210 kN 不是单一自碰撞力, 而是未生效的 filtered pairs 造成的底盘/轮/转向深穿透。**
+   v1 USD 中 77 条 filter 记录在写入时对每个 body pair 调用 `ClearTargets`, 同一 collider 参与后一个 pair
+   时前一个目标被清空; 实际只剩 **21 个 body pair**, 每个 collider 只有 1 个 target。即使把 78 个 pair、
+   272 个 target 全部累积, **collider 级 `FilteredPairsAPI` 在本 PhysX 设置下仍不生效**:
+   默认 hold 5 步仍出现 `base_link↔fr_wheel` **83.6 kN**、`rl_wheel` 72.1 kN、`fl_wheel` 55.7 kN,
+   以及夹爪闭合连杆 2--5 kN; 接触点位于四个轮/转向处, 最小 separation -20.1/-18.5/-145.4 mm,
+   与 MuJoCo 底盘-轮/转向的 169--254 mm 深重叠一致。**body 级 filter 才生效**。
+2. **v1 的 0.18--0.81 m base 位移混入了终止重置。** 200 步 hold 恰逢 `time_out` (episode_length=200),
+   最后一步 env 自动 reset, `root_pos_w` 回到 0; 旧脚本把 reset 后的位置当成末态。另有一部分
+   `base_contact` 终止在接触时自动重置。关闭 `base_contact`/`bad_orientation`/`time_out` 后,
+   body-filter v2 的 200 步 hold base 位移 **31.6 mm (on) vs 31.3 mm (off)**, 属于落地整定, 不是自碰撞推动。
+3. **v1 的 zero-action hold 并没有保持 home 姿态。** `use_default_offset` 未关闭时 zero action 把关节
+   驱动到 0, 旧的 arm drift 2.3--2.8 rad 是零位姿, 不是默认姿态。v2 所有测试改为
+   `use_default_offset=False`, action 直接保持 reset 后的 home 关节角。
+
+### 36.2 v2 机械臂盒: 按关节位置退让, 不做统一比例缩放
+
+URDF `<box size>` 为完整边长, 中心/方向均在各自 link frame。v1→v2 只改了四个 collision 块
+(URDF diff 仅这四处); 质量、惯量、关节限位、驱动、默认姿态均未改。
+
+| link | v2 中心 (m) | v2 完整尺寸 (m) | 主方向 | 与 v1 的差异 / 端部退让 |
+|---|---|---|---|---|
+| Link1 | (0, -0.012, 0.016) | (0.140, 0.150, 0.160) | z (关节壳体) | 底端上移 10 mm, 长度 0.170→0.160; 底部关节1 退让 64 mm, 顶部 96 mm |
+| Link2 | (-0.290, 0, 0.202) | (0.620, 0.120, 0.150) | x | 不变; 远端距 joint3 7 mm, 近端超出 joint2 中心 20 mm、距 STL 近端 57 mm |
+| Link3 | (-0.274, 0, 0.051) | (0.560, 0.100, 0.120) | x (主杆) | 不变; 远端距 joint4 14 mm, 近端超出 joint3 6 mm |
+| Link4 | (0, -0.054, -0.010) | (0.076, 0.048, 0.090) | y (joint4→joint5) | y 由 [-0.105,-0.005] 改为 [-0.078,-0.030]; 距 joint4 30 mm, 距 joint5 47 mm; 横截面未缩小 (x 0.076, z 0.090) |
+| Link5 | (0, -0.015, -0.005) | (0.080, 0.080, 0.080) | y (joint5→joint6) | 中心由 +0.055 移到 -0.015 (70 mm); y 由 [0.015,0.095] 改为 [-0.055,0.025]; 距 joint5 55 mm (反向), 距 joint6 83 mm; 横截面反而略增 (0.076→0.080) |
+| Link6 | (0, 0.005, -0.021) | (0.072, 0.060, 0.036) | z (工具轴) | 不变 |
+
+- Link4 不再向 joint5 方向伸 20 mm; Link5 不再向 joint6 方向伸 29 mm。v1 的 Link4/5 盒都在
+  joint5 同侧, 这是默认位姿 -27 mm 重叠的直接原因。
+- 横截面取“细杆与最粗关节之间”: Link2 0.120×0.150 (细杆约 0.114×0.112, 关节约 0.154×0.200),
+  Link3 0.100×0.120 (杆约 0.12×0.114), Link4 0.076×0.090, Link5 0.080×0.080, Link6 0.072×0.036。
+- 采样表面覆盖率 (仅作取舍记录, 不是包络证明): Link1 20.9%, Link2 41.4%, Link3 50.4%,
+  Link4 11.2%, Link5 4.7%, Link6 18.2%; 盒外表面点的中位距离分别为 9.1/20.5/20.2/95.8/43.5/22.4 mm。
+  Link5 虽覆盖率低, 但中位外距由 v1 的 113.5 mm 降到 43.5 mm (v1 盒偏在远端, 并不贴合);
+  Link4 的 95.8 mm 是刻意留下的 joint4 壳体, 这正是关节退让的代价。
+- 覆盖率取舍是量过的, 不是没有尝试加长: Link5 proximal 从 -0.055 延伸到 -0.080 后, 1800 姿态
+  仍 0 负值, 覆盖长度 80→105 mm, 但 Link3-Link5 最小间隙从 21.0 降到 5.95 mm、Link5-base 从
+  24.1 降到 12.0 mm; 本轮保留 21 mm 间隙, 不把盒做得更满。Link4 向 joint4 (+y) 延伸会在
+  world z>0.877 与 Link3 盒重叠, 向 joint5 (-y) 延伸会在 world z<0.825 与 Link5 盒重叠;
+  0.048 m 是两端都不插对方的折中, 不承诺单盒消除所有构型重叠。
+- 默认相邻盒距离: v1 40.0/16.0/25.0/**-27.0**/**-25.6** mm → v2 40.0/16.0/25.8/**+2.0**/**+44.4** mm。
+  **1800 个运行姿态**上, v2 相邻盒最小距离 40.0/16.0/25.0/2.0/44.4 mm, **0 个负值**;
+  所有非相邻臂杆与 arm-protected 对子也 **0 个负值** (最紧: Link4-Link6 +2.56 mm,
+  Link3-Link5 +20.99, Link3-Link6 +24.08)。v1 有 2 对在全部 1800 姿态为负。
+- 保留有依据的相邻 filter (5 对) 和夹爪闭合连杆 filter; 不把“加了 filter”当成“几何已修好”。
+
+**底盘碰撞体(用户要求回到上一版)**:
+- 当前候选: URDF/PhysX 底盘是 `ranger_base_link.STL` 的**未缩放凸包** (175 顶点/346 面,
+  体积 0.3331 m³); MuJoCo `base_link_col` 是上一版的 **AABB 盒** `1.302×0.8694×0.4351 m`
+  (0.4926 m³)。AABB 仍是过填的视觉/代理形状, 但这是用户要求保留的上一版; 本轮不再缩小。
+- 1800 姿态上臂-底盘最小距离: Link1 52.05 mm、Link2 59.0 mm、Link5 24.14 mm, 全为正;
+  底盘-轮/转向的 body filter 不变。简单代理的全局计数回到 `TP81/FP164/FN0` (margin
+  `TP186/FP113/FN4`), row-pair 仍是 tolerance 31/81、margin 60/190。
+- 本轮曾实现并量过 0.98 缩放凸包 + MuJoCo hull proxy (体积 0.3135 m³, 1800 姿态
+  Link1 55.3/Link2 62.2/Link5 68.3 mm; 全局 tolerance 变为 FN1 P0024), 但**用户要求
+  回退**, 该 trial 不在当前候选中; 相关截图已标 `chassis_shrink_*_SUPERSEDED.png`,
+  仅作历史。
+
+### 36.3 box_link: 左舱体到盖板高度 + 顶部小附件; 右板碰撞删除
+
+原 `box_link.STL` 是 127 个组件的薄壳 (体积约 0.00567 m³), 不是实心块; 单个 AABB 会填满
+上方空腔并把机械臂底座包进去 (v1 实测 Link1 -274 mm、Link2 -220 mm)。本轮按组件重新量:
+
+| 盒 | v2 中心 (m) | v2 完整尺寸 (m) | 覆盖的实体 | v1 差异 |
+|---|---|---|---|---|
+| 左舱体 | (-0.326900, 0, 0.127250) | (0.520200, 0.800800, 0.256500) | p27 主壳体、p3 侧板、p10/p4/p7/p20 顶盖/翻边; z -0.001..0.2555 | v1 中心 (-0.336636,0.004969,0.182302), 尺寸 (0.539272,0.810063,0.398604) |
+| 顶部小附件 | (-0.436000, 0, 0.318550) | (0.180000, 0.180000, 0.126100) | p67 顶部连接件 + p50/p44 底板 + p58 顶部; z 0.2555..0.3816, 坐在左舱体盖板上, 占盖板面积 **7.8%** | 新增; 对应 v1 左大盒上方被填满的附件区 |
+
+- **右安装板碰撞体已按用户要求删除**; p116 板仍保留 visual, 但不再参与 PhysX 碰撞。旧 v1
+  的紫色板盒只用于历史对比。
+- 顶盖高度 v1 **0.3816 m** → v2 **0.2555 m**; 上方释放高度 **0.1261 m**, **毛释放体积
+  0.05253 m³**; 扣除顶部小附件盒 0.00409 m³ 后 **净释放 0.04845 m³**。v2 覆盖左舱体全部
+  外墙/底板/顶盖, 并用小盒覆盖顶部可见附件; 采样中剩余 **494** 个表面点位于顶盖上方且在
+  两个 v2 盒外 (主要是 p1/p2 等左侧小件), 这是**已标记的剩余近似误差**, 不用整体加高盒填回。
+- 顶部小附件盒只占盖板 7.8% 面积, 不是把 0.52×0.80 m 的上方空档重新填满; 左侧/中部上方
+  仍是空的。右板删除后, 不再有“两盒之间的 66.8 mm 间隙”这个几何问题; 右侧只保留 visual 板。
+- 可视化: `outputs/stage413/b/simple_collision_v2/geometry_figures/box_link_{top,front,side,3d}.png`
+  以及 `arm_cr10_Link{1..6}.png` (原始网格表面点 + v1 红虚线 + v2 绿实线); 截图见
+  `outputs/stage413/b/simple_collision_v2/screenshots/`。正面/侧面图显示顶盖以上释放的空档
+  与顶部黄色小盒; 俯视图显示橙色左舱体 + 黄色小盒, 右板不再是碰撞体。
+
+### 36.4 三层与实际 PhysX 资产
+
+| 层 | 文件/值 | 说明 |
+|---|---|---|
+| 可视化 | `mujoco/robots/ranger_cr10/scene_simple_v2.xml` | v2 盒; v1 `scene_simple.xml` 和默认 `scene.xml` 保留 |
+| 距离/奖励 | `mdp/safety.py` sha256 `6e081e59...` | **未修改**; 仍是旧 A 盒, 无 box_link |
+| Isaac PhysX | `assets/ranger_cr10_simple_v2/ranger_cr10_simple_v2_flat.usd` | sha256 `683cd45d...`, 22,873,689 B |
+| 独立 env | `RANGER-CR10-TELEOP-SIMPLECOLL` | `simple_collision_env_cfg.py`, 默认 TELEOP-WBC 未改 |
+
+- flat USD: 23 个 rigid body、30 个 collider; articulation `physxArticulation:enabledSelfCollisions=True`。
+- 底盘 collider 是 `ranger_base_link` 的**未缩放**凸包 (346 面, 0.3331 m³); MuJoCo
+  `base_link_col` 是上一版的 AABB 盒 (0.4926 m³)。0.98 缩放 trial 已回退, 不在当前候选中。
+- filtered pairs **body 级**: 23 个 body、**77 个 body pair**、154 个 directed target、0 个 broken target。
+  覆盖底盘/转向/轮闭合总成、5 对相邻臂杆、AG95 闭合连杆; **arm↔box_link、arm↔chassis/lidar/D435、
+  非相邻臂杆保持开启**。
+- `box_link` 合并进 `base_link`; 左舱体和顶部小附件 collision 保留在
+  `/colliders/base_link/mesh_1|mesh_2`, 世界中心 = base 变换 × 固定局部偏移; **右安装板的
+  collision 已删除 (visual only)**; 不走“关闭该对子”的捷径。
+- **AG95 mimic 修复**: 转换后 7 个 mimic 中 `gripper_finger1_inner_knuckle_joint` 和
+  `gripper_finger1_finger_tip_joint` 的 `physxMimicJoint:rotY:referenceJoint` 为空; 修复后 7 个全部
+  指向 `/rangercr10lidar/joints/gripper_finger1_joint`, gearing/offset/limit 未改, 0 个 broken target。
+  (`fix_mimic_references.py`; 这是关节参数缺陷, 不是本轮失稳主因。)
+- 质量/惯量/驱动核对: URDF diff 仅 collision 块 (Link1/4/5 与 box_link 左盒/第二盒); `base_link` 97.7178 kg = 底盘 88.7576 +
+  box_link 6.8272 + cr10_base 1.8265 + lidar 0.2345 + d435 0.072; `cr10_Link6` 1.1116 kg =
+  Link6 0.2054 + gripper_base 0.8342 + d455 0.072; 转换 joint 表 22 个关节、限位与默认一致;
+  drive stiffness/damping 均为 0 (由 env actuator 控制), 未意外改动。
+- 重建路径 (生成 USD 不入库, 约 22.8 MB, 超过 5000 KB 规则):
+  `convert_ranger_cr10.py --config assets/ranger_cr10_simple_v2/config.yaml` →
+  `flatten_simple_usd.py --input configuration/ranger_cr10_simple_v2_physics.usd` →
+  `fix_mimic_references.py` → `apply_collision_filters.py --mode body`。
+  详见 `assets/ranger_cr10_simple_v2/README.md`; 旧 v1 目录的 `config.yaml` 已从 git 恢复, 未被覆盖。
+
+### 36.5 失稳原因与最小修正
+
+- **原因不是“自碰撞开关本身”, 而是 filter 未生效。** v1 collider 级 filter 即使累积到 272 个
+  target 仍出现 83.6/72.1/55.7 kN 的 base_link↔wheel 接触; body 级同一组 pair 在 5 步内
+  **0 个自接触**。接触点/穿透量与 MuJoCo 的底盘-轮/转向深重叠一致; 不是冲量换算或步长累计错误
+  (`ContactSensor.data.net_forces_w` 是 `get_net_contact_forces(dt=5 ms)` 给出的 impulse/dt;
+  旧脚本取每步/每 body 的最大值, 不是跨步累加; v1 破 filter 的接触点/穿透与几何重叠一致,
+  所以 189--210 kN 是真实深穿透力, 不是单位或重复累计。v2 的 contact view 记录力/位置/分离,
+  本轮没有保留原始 impulse 字段; 若需 impulse 需另开 PhysX contact report, 本轮未用。
+- 最小修正: (1) 累积所有 target、按 **rigid body** 写 `FilteredPairsAPI`; (2) 补两个 mimic
+  referenceJoint; (3) 测试关闭 `base_contact`/`bad_orientation`/`time_out`, 用 home 姿态 +
+  `use_default_offset=False` 的 hold。**没有**通过降刚度、增阻尼、移动 box_link 或改默认姿态掩盖。
+- v2 hold 200 步: on arm drift 0.0216 rad / base 31.97 mm / 0 自接触; off 0.0193 rad / 25.40 mm。
+  两者 base 位移在 22--32 mm 的落地整定范围, 无自接触; on 的略大不是自碰撞推动。
+- v2 小正弦 240 步: on max contact **0 N**, base 22.41 mm; off 0 N, 31.65 mm。
+- 连续 5 次 reset: arm drift ≤0.0085 rad, base z ≈0.4088 m, 每次 contact=false。
+- 底盘 vx=0.2 走 40 步: base 位移 0.3421 m, arm drift ≤0.0088 rad, 0 自接触;
+  左舱体世界中心 (0.0153,-0.0069,0.6259)、顶部小附件 (-0.0938,-0.0089,0.8172), 随 base 变换。
+
+### 36.6 实体阻挡、开放空间与移动底盘
+
+所有 blocking 用同一协议: home 起始、无 reset 随机化、无接触/姿态/超时终止、慢速 120 步
+关节目标插值; 同时记录**目标值、实际值、目标 pair 的 MuJoCo 距离、PhysX body pair/接触点/力**。
+
+| 测试 | self | target error | 最终目标 pair 距离 | 首个 PhysX 接触 | base 位移 |
+|---|---|---:|---:|---|---:|
+| 左舱体 (Link2) | on | **0.4787 rad** | **+5.0 µm** | `base_link↔Link2`, 位置 z=0.7525 (盒顶) | 32.6 mm |
+| 左舱体 (Link2) | off | 0.0249 rad | **-104.3 mm** | 无 | 32.1 mm |
+| 非相邻 Link3↔Link6 (front path) | on | **0.2799 rad** | **+0.5 µm** (min -1.5 µm) | 仅 `Link3↔Link6`, step 104 | 31.7 mm |
+| 非相邻 Link3↔Link6 | off | 0.0223 rad | **-36.0 mm** | 无 | 31.6 mm |
+| 盒顶上方空档 (Link2 穿过 v1 上层) | on | 0.0131 rad | **+18.7 mm** | 无 | 31.7 mm |
+| 右安装板 | — | — | — | **碰撞体已按用户要求删除** (p116 仅 visual) | — |
+
+- 左舱体 on 的目标误差大、pair 距离保持在 0 附近 (+5.0 µm)、接触点正好在新盒顶 z=0.7525;
+  off 目标几乎到达、pair 穿透 -104.3 mm 且无接触。**这是目标 pair 造成的阻挡, 不是仅凭跟踪误差。**
+- 非相邻 Link3↔Link6 的旧目标曾在 step 72/75 先撞到 `base_link↔gripper_finger2` (位置在盒子附近),
+  之后 step 111 才到 Link3↔Link6; 因此旧的“9.74 mm 间隙”不是目标 pair 的干净阻挡。新的 front-path
+  目标沿路径所有臂杆 x>-0.02、Link6 x>0.12, 首接触只有 Link3↔Link6; 最终 pair 距离 +0.5 µm
+  (最小 -1.5 µm, 在 PhysX 接触容差内), 仍是目标 pair 的阻挡。
+- 上方空档目标: 同一姿态在 v1 盒下 Link2 距离 **-91.5 mm**, 在 v2 盒下 **+18.6 mm** 且无接触;
+  这是“释放上方空置空间”的直接证据, 不是把盒子整体缩小。
+- 右板: **碰撞体已按用户要求删除**, p116 板仅保留 visual; 旧的 plate target 不再对应任何
+  collision, `block_plate_on.json` 已改记为 `status: not_applicable`。历史 build 中该目标曾在
+  z=0.656 先撞底盘 (Link3-板从未低于 151.5 mm), 说明旧 69.9 mm 提前停止是底盘, 不是板;
+  现在不再把板作为碰撞测试。
+
+### 36.7 距离代理: 上一轮 P0021--P0024 的列映射纠正
+
+上一轮把 `new_distance` 的**全局最小值**(所有臂杆 × 所有 protected)记到行内 arm 的标签上,
+这是列/聚合错误。重算:
+
+- 旧 1.19/4.18/5.18/18.62 mm 的 winner 是: P0021--P0023 `Link5 盒↔base_link` (底盘),
+  P0024 `Link4 盒↔base_link`; **不是 Link3↔lidar**。
+- Link3 盒↔lidar 在 P0021--P0024 的实际距离是 **52.93/51.94/51.60/42.29 mm** (v1 与 v2 的
+  Link3 盒相同, 数值一致)。因此它们不是 20 mm 裕度 FN, 而是 **row-pair 的 tolerance 和 margin
+  都 miss**; 全局 label 之所以 unsafe, 是因为另一对 (v2 的 Link5↔base, 真实网格穿透 -64 mm) 在
+  同一姿态为负。全局 unsafe 不能当作“Link3↔lidar 被检出”。
+- 20 mm 裕度的**全局** FN 是另外四例: **D0106, D0109, D0157, D0264**; 参考距离 5.40/15.17/3.66/13.60 mm,
+  row-pair 新距离 48.5/67.3/88.9/150 mm, winner 分别为 Link3/4/6↔lidar。这四例是真正的 false-safe。
+- 固定近接触集 342 行 (参考标签未改):
+  - 全局 tolerance TP81/FP164/FN0/TN97; 全局 margin TP186/FP113/FN4/TN39;
+  - **row-pair tolerance TP50/FP9/FN31/TN252; row-pair margin TP130/FP33/FN60/TN119**;
+  - FN 31 = 20 个 Link3 + 11 个 Link6; Link2/4/5 无 row-pair FN;
+  - 20 个 Link3 FN 的参考交叠三角形质心都在 Link3 局部 x **-0.5738..-0.6101**, 全部落在
+    v2 盒远端 -0.554 之外, 即 **刻意退让的 joint4 区域**; 没有一例在主杆 x∈[-0.554,0.006] 内。
+    不把这段 joint4 空隙重新填满来消 FN。
+- 1800 姿态回放 10800 行: 旧 A 裕度报警 379 → 新盒 0 (removed 379, added 0); 但回放**没有逐行
+  ground truth**, 这只是 proxy-to-proxy 差异, 不叫“误报消除”。有效参考只在 342 行近接触集。
+- 非有限值 0, unknown 0, 失败 0; 单位/轴/阈值/列映射已逐行导出到
+  `near_rows_v2.csv`/`replay_rows_v2.csv`。
+- **结论: 新简化距离代理不能作为奖励/安全代理。** 全局 tolerance FN0, margin FN4;
+  row-pair 仍有 31/81 tolerance miss、60/190 margin miss; 其中 Link3 的 miss 全部是关节
+  退让, Link6 是另一个 11 例残差 (紧凑腕部盒)。
+
+### 36.8 判断与下一步
+
+- **单环境自碰撞稳定性: 通过。** body 级 filter + mimic 修复后, hold/小运动 on/off 的
+  base 位移在 22--32 mm 的落地整定范围、0 自接触; on hold arm drift 0.0216 rad, off 0.0193;
+  reset/base motion 无自接触; 先前的 189--210 kN 和 0.18--0.81 m 是 filter 未生效 +
+  终止重置 + 零位姿三个测量/配置问题的叠加。
+- **局部实体阻挡: 通过(左舱体、非相邻 Link3↔Link6)。** 目标 pair 在接触点被阻止, 目标误差
+  0.28--0.48 rad, 而 off 仍穿透 36--105 mm; 不是仅凭跟踪误差。
+- **上方空置空间: 通过。** Link2 在 v1 盒内 -91.5 mm、v2 盒外 +18.7 mm, 无接触。
+- **底盘碰撞体: 回到上一版。** URDF/PhysX 为未缩放凸包 (346 面, 0.3331 m³); MuJoCo
+  `base_link_col` 为 AABB 盒 (0.4926 m³)。0.98 缩放 trial 已按用户要求回退, 不在当前候选;
+  1800 姿态臂-底盘最小距离 Link1 52.05 / Link2 59.0 / Link5 24.14 mm, 全正。
+- **右安装板: 碰撞体已按用户要求删除 (visual only), 不再有板面碰撞测试; N/A。**
+- **距离代理: 不通过。** row-pair tolerance 31/81、margin 60/190 漏检; 全局 tolerance FN0、
+  margin FN4; Link3 全在 joint4 退让区, Link6 11 例; 不能替换 `safety.py`, 不能据此启动 PPO。
+- **小规模并行: 可以有条件进入“仅自碰撞验证”** (例如 64 env, 不做 PPO/不替换 reward),
+  因为单环境稳定性、过滤、box_link 跟随和局部阻挡已通过; 但**不能**进入训练或代理替换。
+- 默认 `model_9999`、默认 TELEOP-WBC、默认 USD、`safety.py`、Actor/Observation/reward/action/
+  默认初始姿态/D455/键盘/工作空间/`rangercr10-world` 均未改; 冻结资产、历史产物、`M agx` 保留;
+  本轮未提交/推送。
+
+产物:
+`outputs/stage413/b/simple_collision_v2/validation_summary_v2.json` (汇总)、
+`RESULT_MANIFEST_V2.json` (69 个文件哈希)、
+`geometry_validation.json`、`geometry_figures/`、`usd_inspection_v2.json`、
+`mimic_references.json`、`filters_v2.json`、`hold_*_200.json`、`motion_*.json`、
+`reset_base.json`、`block_box_*.json`、`block_arm_front_*.json`、`block_over_on.json`、
+`block_plate_on.json`、`distance_proxy_comparison_v2.json`、`near_rows_v2.csv`、
+`replay_rows_v2.csv`、`link3_miss_localization.json`。

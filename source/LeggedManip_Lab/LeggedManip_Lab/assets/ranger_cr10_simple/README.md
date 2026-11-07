@@ -1,4 +1,8 @@
-# Ranger CR10 simple-collision candidate (test only)
+# Ranger CR10 simple-collision candidate v1 (historical)
+
+The active independent test candidate is now `../ranger_cr10_simple_v2/`; this
+directory keeps the v1 URDF/config and its evidence. v1 is **not** the asset loaded by
+`RANGER-CR10-TELEOP-SIMPLECOLL` after 2026-11-07.
 
 This directory is an independent test candidate. It does **not** replace the default
 `RANGER-CR10-TELEOP-WBC` asset or configuration.

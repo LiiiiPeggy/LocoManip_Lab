@@ -3,7 +3,7 @@
 A snapshot, not a log. Delete what is no longer true; do not append history here (that is
 PROCESS.md). Do not record unverified conclusions.
 
-**Last verified: 2026-11-07 for stage 4.13b/radar; earlier claims retain the date of their own stage.**
+**Last verified: 2026-11-07 for stage 4.13b v2 simple collision; earlier claims retain the date of their own stage.**
 Every claim below was produced by re-running the command on this machine, unless marked otherwise.
 
 ## Current objective
@@ -810,22 +810,42 @@ Artifacts (each verified by loading/playing it back, not by exit code):
    `false` leaves them as free hinges), and the USD's limits are in **degrees** on both platforms.
    The source meshes were decimated first: 83 MB / 1.73 M faces → 19 MB / 0.38 M faces.
 
-   **Simple arm collision + independent Isaac self-collision (2026-11-07).** A test-only candidate
-   (`RANGER-CR10-TELEOP-SIMPLECOLL`, flat `ranger_cr10_simple_flat.usd`) replaces Link1--6 with one
-   box each and gives box_link two solid colliders (left enclosure + right plate); box_link is
-   merged into base_link but its colliders remain and follow the base. The default config, USD,
-   `safety.py` and frozen assets are untouched. The visual/physical simple boxes are documented in
-   `simple_boxes.json`; the old A reward proxy is still the old table and has no box_link, so the
-   layers differ explicitly. Self-collisions are actually enabled on the imported articulation and
-   77 filtered pairs cover chassis/adjacent arm/gripper assemblies. Local blocking works: slow
-   approach to the box left enclosure (on pair distance -0.026 mm vs off -24.3 mm) and non-adjacent
-   Link3↔Link6 (on +9.74 mm vs off -21.7 mm) are stopped. **Global stability fails**: default hold
-   with self on moves the base 0.182 m (off 0.029), small sinusoidal motion produces ~189 kN and
-   0.193 m, and box approach moves the base 0.8 m. The plate target stops 69.9 mm early and is
-   confounded, not a clean pass. The new simple distance proxy removes all 379 far A margin false
-   alarms but misses **4 true Link3 path overlaps** (P0021--P0024), so it is not yet a reward
-   proxy. Verdict: local blocking yes, validation/parallel tests/training no; fix filtering/initial
-   overlap and Link3 box coverage first.
+   **Simple arm collision + independent Isaac self-collision, v2 (2026-11-07).** The test-only
+   `RANGER-CR10-TELEOP-SIMPLECOLL` now loads `assets/ranger_cr10_simple_v2/ranger_cr10_simple_v2_flat.usd`
+   (23 bodies, 30 colliders, articulation self-collision true). Link1--6 are one box each with
+   joint-end retreats (v2 default adjacent clearances 40.0/16.0/25.8/**2.0**/**44.4** mm vs v1
+   40.0/16.0/25.0/**-27.0**/**-25.6**; **0 negative adjacent/non-adjacent/protected pairs over the
+   1800 operating poses**). `box_link` is two solid boxes: left enclosure up to its lid (top
+   0.2555 m, freed 126.1 mm / 0.0525 m³ gross above the v1 0.3816 m top) plus a small top-accessory
+   box (0.18×0.18×0.1261 m, 7.8% of the lid footprint); the right mounting plate collision was
+   removed per user request and is visual only;
+   merged into base_link, both colliders follow the base. **77 body-level filtered pairs are
+   applied; collider-level FilteredPairsAPI was measured not to work in this PhysX setup and the
+   earlier per-pair `ClearTargets` kept only the last pair.** The v1 chassis/wheel contacts
+   (83.6/72.1/55.7 kN at wheel positions, separations -20/-18/-145 mm) disappear with body
+   filters. Two empty AG95 mimic `referenceJoint` targets were repaired. With body filters, home
+   hold 200 steps: arm drift 0.0216 rad, base 31.97 mm, 0 self-contacts (off 0.0193 rad / 25.40 mm);
+   small sinusoid 240 steps: 0 N contact; 5 resets and 0.342 m base motion: no self-contact. Clean
+   local blocking: box left on target error 0.479 rad / pair +5.0 µm / contact at the new lid vs
+   off 0.025 rad / -104.3 mm; Link3↔Link6 on 0.280 rad / +0.5 µm / only that pair vs off
+   0.022 rad / -36.0 mm; over-box target reaches with +18.7 mm clearance and no contact (same pose
+   is -91.5 mm against the v1 box); the right plate collider was removed per user request, so its
+   blocking test is **N/A** and the plate is visual only. The chassis was reverted to the previous
+   version at the user's request: URDF/PhysX unscaled 346-face convex hull (0.3331 m³), MuJoCo AABB
+   box (0.4926 m³); 1800-pose arm-chassis minima Link1 52.05 / Link2 59.0 / Link5 24.14 mm, all
+   positive. The 0.98-scaled-hull trial was measured (0.3135 m³, global proxy P0024 false-safe)
+   but is **superseded and not in the current candidate**.
+   The simple distance proxy is **not acceptable as a reward proxy**: row-pair tolerance 31/81
+   misses, margin 60/190 misses; global tolerance FN0 and margin FN4; all 20 Link3 misses
+   are at the distal joint4 retreat
+   (x -0.574..-0.610, outside the box end -0.554), plus 11 Link6 misses. The old P0021--P0024
+   1.19/4.18/5.18/18.62 mm were the **global** minimum (Link5/4 vs base_link), not the
+   Link3-lidar pair; Link3-lidar is 42.3--52.9 mm and the 20 mm global false-safe rows are
+   D0106/D0109/D0157/D0264. `safety.py` (sha `6e081e59...`) is unchanged. Verdict: single-env
+   self-collision stability and local blocking pass; a small-scale self-collision-only parallel
+   validation may proceed, but **no PPO / reward-proxy replacement**, and the default deployment,
+   USD and frozen assets are untouched. Evidence: `outputs/stage413/b/simple_collision_v2/
+   validation_summary_v2.json`; rebuild: `assets/ranger_cr10_simple_v2/README.md`.
 
 ## Known minor documentation drift (verify before editing docs)
 

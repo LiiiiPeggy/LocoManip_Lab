@@ -30,10 +30,15 @@ Usage (from the repository root):
 
 from __future__ import annotations
 
+import argparse
 import math
 import os
 
 from isaaclab.app import AppLauncher
+
+ap = argparse.ArgumentParser()
+ap.add_argument("--config", default=None, help="conversion config (default: sibling config.yaml)")
+args = ap.parse_args()
 
 app_launcher = AppLauncher(headless=True)
 simulation_app = app_launcher.app
@@ -45,7 +50,7 @@ from isaaclab.sim.converters import UrdfConverter, UrdfConverterCfg  # noqa: E40
 from pxr import Usd, UsdPhysics  # noqa: E402
 
 ASSET_DIR = os.path.dirname(os.path.abspath(__file__))
-CONFIG_PATH = os.path.join(ASSET_DIR, "config.yaml")
+CONFIG_PATH = os.path.abspath(args.config) if args.config else os.path.join(ASSET_DIR, "config.yaml")
 
 
 def build_cfg() -> UrdfConverterCfg:

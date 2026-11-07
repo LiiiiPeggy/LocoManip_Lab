@@ -532,15 +532,31 @@ gripper base and the lidar are **not closed**, so their containment is unknown r
   certified culled at lower bound 0.05 m, 0 unknown. The 50 mm lower bound is valid for the 0/20 mm
   classification; welded containment (29 rows, 49 constituent checks) found 0 cases, while raw-STL
   containment remains unknown.
-- **Simple arm collision boxes + box_link: local blocking works, global self-collision does not (2026-11-07).**
-  The test-only `RANGER-CR10-TELEOP-SIMPLECOLL` env uses a flat USD with one box per arm Link1--6 and
-  two box_link colliders (left enclosure + right mounting plate; the single AABB would engulf the arm
-  base). box_link is merged into base_link but its collision survives and follows the base. The default
-  TELEOP-WBC config, USD, `safety.py` reward proxy and frozen assets are untouched, so the old A proxy
-  still has no box_link. Self-collisions are actually enabled on the imported articulation; 77 filtered
-  pairs cover chassis/adjacent arm/gripper assemblies. Local blocking works (box-lid approach: on
-  -0.026 mm pair distance vs off -24.3 mm; non-adjacent Link3<->Link6: on +9.74 mm vs off -21.7 mm),
-  but global stability fails: self-on hold moves the base 0.182 m (off 0.029), small sinusoidal motion
-  gives ~189 kN and 0.193 m, and the plate target is confounded. The new simple distance proxy removes
-  all 379 far A margin false alarms but misses 4 true Link3 path overlaps (P0021--P0024), so it is not
-  a reward proxy and the candidate is not ready for parallel tests or training. See plan section 35.
+- **Simple arm collision v2: body-level filters are mandatory; single-env blocking passes, the simple
+  distance proxy does not (2026-11-07).** The test-only `RANGER-CR10-TELEOP-SIMPLECOLL` loads
+  `assets/ranger_cr10_simple_v2/ranger_cr10_simple_v2_flat.usd` (23 bodies, 30 colliders, self-collision
+  true). PhysX here **ignores collider-level `FilteredPairsAPI`**; filters must be written on rigid-body
+  prims, and every target must be accumulated (the old per-pair `ClearTargets` kept only the last pair).
+  With 77 body-level pairs the v1 chassis/wheel contacts (83.6/72.1/55.7 kN, separations -20/-18/-145 mm)
+  disappear. v2 Link1--6 boxes retreat at joints; default adjacent clearances are 40.0/16.0/25.8/2.0/44.4 mm
+  and there are **0 negative adjacent/non-adjacent/protected pairs over the 1800 operating poses**. box_link
+  has the left enclosure to its lid (top 0.2555 m; v1 0.3816 m freed 126.1 mm / 0.0525 m3 gross) plus
+  a small top-accessory box (0.18x0.18x0.1261 m, 7.8% of the lid footprint); the right mounting plate
+  collision was removed per user request and is visual only. Both colliders follow the base. The chassis
+  was reverted to the previous version at the user's request: URDF/PhysX unscaled 346-face convex hull
+  (0.3331 m3), MuJoCo AABB box (0.4926 m3); 1800-pose arm-chassis minima Link1 52.05 / Link2 59.0 /
+  Link5 24.14 mm, all positive. A 0.98-scaled-hull trial was superseded and is not in the candidate.
+  Two AG95 mimic `referenceJoint` targets
+  were empty after conversion and are repaired to `gripper_finger1_joint` (7/7 now). Home hold/sinusoid/
+  resets/base motion on/off have **0 self-contacts** (hold base 31.6 vs 31.3 mm). Clean blocking: box lid
+  on 0.477 rad target error / +5.6 um vs off 0.027 / -104.7 mm; Link3-Link6 on 0.278 / +4.9 um vs off
+  0.024 / -36.0 mm; over-box +18.6 mm no contact (v1 box -91.5 mm); the right plate collider was
+  removed per user request, so its blocking test is N/A and the plate is visual only.
+  The simple distance proxy is **not** a reward proxy: row-pair tolerance 31/81 misses, margin 60/190;
+  global tolerance FN0 and margin FN4; all 20 Link3 misses are at the distal joint4 retreat,
+  plus 11 Link6. The superseded chassis shrink had added a P0024 false-safe (Link5 box +10.6 mm vs
+  real mesh -66.4 mm); the reverted chassis returns P0024 to -38.6 mm. P0021--P0024's old 1.19--18.62 mm
+  were the global Link5/4-vs-base minimum, not Link3-lidar (42.3--52.9 mm); global 20 mm false-safe rows
+  are D0106/D0109/D0157/D0264. Default USD/config/`safety.py`/deployment untouched; small-scale
+  self-collision-only parallel validation may proceed, but no PPO and no proxy replacement. Plan §36;
+  evidence `outputs/stage413/b/simple_collision_v2/validation_summary_v2.json`.

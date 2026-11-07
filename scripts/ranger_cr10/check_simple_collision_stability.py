@@ -23,6 +23,8 @@ from isaaclab.app import AppLauncher
 ap = argparse.ArgumentParser()
 ap.add_argument("--self-collisions", choices=("on", "off"), default="on")
 ap.add_argument("--steps", type=int, default=200)
+ap.add_argument("--usd", default=None, help="optional USD override for a diagnostic copy")
+ap.add_argument("--label", default=None, help="optional output suffix (default: mode)")
 ap.add_argument("--out", default="outputs/stage413/b/simple_collision_validation")
 args = ap.parse_args()
 
@@ -41,23 +43,33 @@ from LeggedManip_Lab.tasks.manager_based.leggedmanip_lab.config.ranger_cr10.simp
 def main() -> None:
     cfg = RangerCr10TeleopSimpleCollisionEnvCfg()
     cfg.scene.num_envs = 1
-    cfg.events.reset_robot_joints = None
+    cfg.events.reset_base.params["pose_range"] = {"x": (0.0, 0.0), "y": (0.0, 0.0), "yaw": (0.0, 0.0)}
+    cfg.events.reset_robot_joints.params["position_range"] = (1.0, 1.0)
+    cfg.events.reset_robot_joints.params["velocity_range"] = (0.0, 0.0)
     cfg.events.randomize_actuator_gains = None
+    cfg.terminations.base_contact = None
+    cfg.terminations.bad_orientation = None
+    cfg.terminations.time_out = None
+    cfg.actions.joint_pos.use_default_offset = False
     cfg.scene.robot.spawn.articulation_props.enabled_self_collisions = args.self_collisions == "on"
+    if args.usd is not None:
+        cfg.scene.robot.spawn.usd_path = args.usd
     env = gym.make("RANGER-CR10-TELEOP-SIMPLECOLL", cfg=cfg)
     u = env.unwrapped
     robot = u.scene["robot"]
     sensor = u.scene["contact_forces"]
     env.reset()
-    zero = torch.zeros(u.num_envs, u.action_manager.total_action_dim, device=u.device)
     arm_idx = [robot.joint_names.index(f"cr10_joint{i}") for i in range(1, 7)]
     start = robot.data.joint_pos[:, arm_idx].clone()
     base0 = robot.data.root_pos_w.clone()
+    scale = cfg.actions.joint_pos.scale
+    hold = torch.zeros(u.num_envs, u.action_manager.total_action_dim, device=u.device)
+    hold[:, 2:] = start / scale
     max_drift = 0.0
     max_force = 0.0
     force_bodies = []
     for step in range(args.steps):
-        env.step(zero)
+        env.step(hold)
         drift = (robot.data.joint_pos[:, arm_idx] - start).abs().max().item()
         max_drift = max(max_drift, drift)
         forces = sensor.data.net_forces_w
@@ -72,6 +84,7 @@ def main() -> None:
     final = robot.data.joint_pos[:, arm_idx]
     base1 = robot.data.root_pos_w
     result = dict(mode=args.self_collisions, steps=args.steps,
+                  usd=args.usd if args.usd is not None else "env default",
                   max_arm_drift_rad=max_drift,
                   final_arm_error_rad=(final - start).abs().max().item(),
                   base_displacement_m=(base1 - base0).norm().item(),
@@ -79,8 +92,8 @@ def main() -> None:
                   contact_bodies=force_bodies,
                   body_names=robot.body_names,
                   sensor_body_names=sensor.body_names,
-                  note="zero action; reset randomisation disabled; simple-box candidate")
-    out = os.path.join(args.out, f"stability_{args.self_collisions}.json")
+                  note="home-pose hold; reset randomisation disabled; simple-box candidate")
+    out = os.path.join(args.out, f"stability_{args.label or args.self_collisions}.json")
     os.makedirs(args.out, exist_ok=True)
     with open(out, "w") as f:
         json.dump(result, f, indent=1)

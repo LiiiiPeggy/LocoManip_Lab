@@ -497,3 +497,81 @@ margin false alarms, but on the 342 near rows it misses four true Link3 path ove
 because the shortened Link3 box does not cover that surface region. It is therefore not a reward
 proxy. Next work: isolate the global self-collision contacts/filters, restore coverage of those four
 Link3 regions, then decide whether the simplified box length is acceptable.
+
+## 12. Stage 4.13b v2: the self-collision "failure" was a filter and test-protocol artifact
+
+The v1 stage-4.13b conclusion -- local blocking works but global self-collision is unstable -- was
+reopened because three independent effects had been read as physics failure.
+
+First, the test protocol did not hold the pose it claimed. Zero action with `use_default_offset`
+left the joint targets at zero, so the arm moved to a zero pose (the 2.3--2.8 rad "drift" in the
+first stability JSON). The 200-step hold also hit the 200-step time-out exactly: the last env step
+reset the robot to the origin, so the final base position looked like a 0.18 m displacement. A
+`base_contact` termination could additionally teleport the robot on the first large contact. The
+v2 tests therefore disable `base_contact`, `bad_orientation` and `time_out`, use
+`use_default_offset=False`, and hold the reset home joint targets.
+
+Second, and decisive, the filtered pairs were not effective. The v1 writer looped over body pairs
+and called `ClearTargets` for each pair, so a collider that appears in several pairs kept only the
+last pair's targets; the 77 recorded pairs collapsed to 21 surviving pairs with one target each.
+Accumulating all 78 pairs and 272 targets fixed that but still produced `base_link` vs front/rear
+left/right wheels at 83.6/72.1/55.7 kN and gripper-link contacts at 2--5 kN. The contact points are
+the wheel/steering positions and the minimum separations (-20.1/-18.5/-145.4 mm) match MuJoCo's
+169--254 mm chassis-wheel/steering overlaps. **PhysX ignores collider-level `FilteredPairsAPI` in
+this asset; the same pairs applied to rigid-body prims produce zero self-contacts.** The fix is
+body-level filters with accumulated targets, not lower stiffness, higher damping, moving box_link
+or changing the default pose.
+
+Third, the reported "P0021--P0024 new distances 1.19/4.18/5.18/18.62 mm" were the global minimum
+over every arm link and every protected collider, then compared with a reference label for the
+Link3-lidar pair. Recomputing per pair: those numbers are Link5-vs-base (P0021--P0023) and
+Link4-vs-base (P0024); the Link3 box to lidar is 52.93/51.94/51.60/42.29 mm in both v1 and v2.
+The 20 mm global false-safe rows are D0106/D0109/D0157/D0264, not P0021--P0024. The old table is
+kept as history; the v2 comparison exports per-row global and row-pair distances and shows both
+confusion matrices, so a global true positive cannot be mistaken for pair detection.
+
+The v2 geometry addresses the original joint-overlap concern with evidence rather than a uniform
+scale. Link4's box is shortened to the central 48 mm between joint4 and joint5 (30 mm and 47 mm
+end retreats); Link5's box is re-centred from the distal side to the central/proximal 80 mm
+(55 mm before joint5, 83 mm before joint6); Link1's bottom is raised 10 mm; Link2/3/6 are
+unchanged. Default adjacent box distances become 40.0/16.0/25.8/2.0/44.4 mm, and across the 1800
+operating poses every adjacent, non-adjacent and protected pair is non-negative. The remaining
+coverage gaps are deliberate joint-end retreats, not accidental overfill; the Link4/5 surface
+coverage drop is recorded rather than hidden.
+
+box_link was re-measured component-wise. The left enclosure shell/frame ends at a lid at z=0.2555;
+the v1 box top of 0.3816 was there only to include small accessories (a bracket, two plates and a
+connector). The v2 left box stops at the lid and a small 0.18x0.18x0.1261 m box covers the visible
+top accessory (7.8% of the lid footprint); the right mounting plate collision was removed per user
+request and is visual only. The freed volume is 0.0525 m3 gross, 0.0484 m3 net of the top box; 494
+sampled accessory surface points (mostly p1/p2) remain outside. The free over-box test drives Link2
+through the old upper slab (-91.5 mm against v1) and reaches the target with +18.6 mm against v2,
+no contact. The old plate target no longer corresponds to a collision; it is recorded as
+not_applicable rather than a plate pass.
+
+Two smaller defects were fixed in the candidate build. The AG95 conversion left
+`gripper_finger1_inner_knuckle_joint` and `gripper_finger1_finger_tip_joint` with an empty
+`physxMimicJoint:rotY:referenceJoint`; all seven now target `gripper_finger1_joint` (gearing,
+offset and limits unchanged). The old Link3-Link6 blocking target was also confounded: the
+gripper fingers hit the box at steps 72/75 before the target pair at step 111, so the "9.74 mm"
+stop was not the target pair. The clean target keeps every arm box in front of the box
+(x > -0.02, Link6 x > 0.12) and contacts only Link3-Link6.
+
+The chassis collision needed the same layer audit. The MuJoCo model used an AABB box of the
+ranger_base_link mesh (0.4926 m3), while the URDF/PhysX chassis was already the mesh convex hull
+(346 faces, 0.3331 m3). The box was an overfilling proxy, not the real collision. A trial scaled
+the URDF chassis collision mesh by 0.98 and used the same scaled 346-face hull in MuJoCo (0.3135
+m3); across the 1800 poses the arm-chassis minima were Link1 55.3 / Link2 62.2 / Link5 68.3 mm.
+The tighter hull made the global simple proxy report a P0024 false-safe (Link5 box +10.6 mm while
+the original Link5 mesh still penetrated the unscaled chassis by 66.4 mm). Per user request that
+trial was reverted; the current candidate keeps the previous version: URDF/PhysX unscaled hull,
+MuJoCo AABB box. The 1800-pose arm-chassis minima are Link1 52.05 / Link2 59.0 / Link5 24.14 mm,
+all positive, and the global proxy is back to tolerance FN0/FP164, margin FN4
+(D0106/D0109/D0157/D0264); row-pair metrics remain 31/81 and 60/190.
+
+The distance proxy still fails as a reward proxy even after the geometry: row-pair tolerance
+misses 31/81, margin misses 60/190. All 20 Link3 misses localise to the distal joint4 retreat
+(local x -0.574..-0.610, outside the box end -0.554); 11 Link6 misses remain in the compact wrist
+box. Filling the joint gap to remove them would reintroduce adjacent overlap, so it is not done.
+Single-env self-collision stability and the three clean blocking tests pass; a small-scale
+self-collision-only parallel validation may proceed, but no PPO and no reward-proxy replacement.

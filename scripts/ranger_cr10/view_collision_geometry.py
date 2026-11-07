@@ -17,18 +17,21 @@
 * **collision** -- the geoms MuJoCo actually collides: convex hulls for the arm links, primitives for
   the chassis, the cameras and the gripper jaws (group 3);
 * **visual** -- the original triangle meshes (group 2), which is what the reference distance measures;
-* **boxes** -- the box proxy `mdp/safety.py` uses, drawn as wireframe cartons (user scenegraph).
+* **boxes** -- the old box proxy `mdp/safety.py` uses, drawn as wireframe cartons only in
+  ``--mode boxes``; ``--mode all`` is visual + collision and does not draw it.
 
 They are not the same shape, and the whole stage exists because the difference was invisible. Toggling
 between them in one window is the fastest way to see why a hull can report contact while the meshes
 are 30 mm apart.
 
 Usage:
-    python scripts/ranger_cr10/view_collision_geometry.py                    # collision hulls only
+    python scripts/ranger_cr10/view_collision_geometry.py                    # default scene, collision hulls only
+    python scripts/ranger_cr10/view_collision_geometry.py --scene simple_v2  # v2 candidate collision boxes
+    python scripts/ranger_cr10/view_collision_geometry.py --scene simple_v2 --mode all  # v2 visual + collision
     python scripts/ranger_cr10/view_collision_geometry.py --mode visual      # original meshes
-    python scripts/ranger_cr10/view_collision_geometry.py --mode boxes       # proxy boxes
-    python scripts/ranger_cr10/view_collision_geometry.py --mode all         # all three at once
-    python scripts/ranger_cr10/view_collision_geometry.py --pose-file outputs/stage411/operating_poses.npz --index 93
+    python scripts/ranger_cr10/view_collision_geometry.py --mode boxes       # old safety.py proxy boxes (explicit only)
+    python scripts/ranger_cr10/view_collision_geometry.py --scene simple_v2 --mode all \
+        --pose-file outputs/stage411/operating_poses.npz --index 93
 
 Keys (the viewer's own): `0`-`8` toggle geom groups, so the collision/visual layers can be switched
 off by hand as well.
@@ -45,10 +48,16 @@ from pathlib import Path
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[2]
-SCENE = ROOT / "mujoco/robots/ranger_cr10/scene.xml"
+SCENES = {
+    "default": ROOT / "mujoco/robots/ranger_cr10/scene.xml",
+    "simple": ROOT / "mujoco/robots/ranger_cr10/scene_simple.xml",
+    "simple_v2": ROOT / "mujoco/robots/ranger_cr10/scene_simple_v2.xml",
+}
 SAFETY = ROOT / "source/LeggedManip_Lab/LeggedManip_Lab/tasks/manager_based/leggedmanip_lab/mdp/safety.py"
 
 ap = argparse.ArgumentParser(description=__doc__)
+ap.add_argument("--scene", choices=tuple(SCENES), default="default",
+                help="default mesh-collision scene, v1 simple boxes, or v2 candidate")
 ap.add_argument("--mode", choices=("collision", "visual", "boxes", "all"), default="collision")
 ap.add_argument("--pose-file", default="", help="npz with an 'poses' array of six arm joints")
 ap.add_argument("--index", type=int, default=0)
@@ -116,8 +125,35 @@ def box_world_poses(model, data, safety) -> list[tuple[np.ndarray, np.ndarray, n
     return out
 
 
+def color_v2_collisions(model) -> None:
+    """Make the v2 candidate collision bodies readable in the interactive viewer."""
+    green = np.array([0.10, 0.85, 0.20, 0.55], dtype=np.float32)
+    orange = np.array([1.00, 0.45, 0.00, 0.60], dtype=np.float32)
+    yellow = np.array([1.00, 0.85, 0.10, 0.65], dtype=np.float32)
+    gray = np.array([0.55, 0.55, 0.60, 0.30], dtype=np.float32)
+    for index in range(model.ngeom):
+        name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, index) or ""
+        if name.startswith("cr10_Link") and name.endswith("_col_simple"):
+            model.geom_rgba[index] = green
+        elif name in ("gripper_base_link_col0", "gripper_base_link_col1", "gripper_base_link_col2",
+                      "d455_link_col"):
+            model.geom_rgba[index] = green
+        elif name == "box_link_col_left":
+            model.geom_rgba[index] = orange
+        elif name == "box_link_col_top":
+            model.geom_rgba[index] = yellow
+        elif model.geom_group[index] == 3:
+            model.geom_rgba[index] = gray
+
+
 def main() -> None:
-    model = mujoco.MjModel.from_xml_path(str(SCENE))
+    scene_path = SCENES[args.scene]
+    print(f"scene: {args.scene} ({scene_path.relative_to(ROOT)})")
+    model = mujoco.MjModel.from_xml_path(str(scene_path))
+    if args.scene == "simple_v2":
+        color_v2_collisions(model)
+        print("colors: green = arm/gripper, orange = box_link left, yellow = box_link top, "
+              "gray = chassis/wheels/lidar")
     data = mujoco.MjData(model)
     mujoco.mj_resetDataKeyframe(model, data, model.key("home").id)
     if args.pose_file:
@@ -129,7 +165,9 @@ def main() -> None:
     mujoco.mj_forward(model, data)
 
     safety = load_safety()
-    boxes = box_world_poses(model, data, safety) if args.mode in ("boxes", "all") else []
+    # ``all`` is visual + collision only. The old safety.py proxy boxes are now an
+    # explicit opt-in via --mode boxes; they are not drawn in the normal all view.
+    boxes = box_world_poses(model, data, safety) if args.mode == "boxes" else []
     if boxes:
         print(f"box proxy: {len(boxes)} parts (orange wireframe)")
 

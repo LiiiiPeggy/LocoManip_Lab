@@ -16,9 +16,13 @@
 
 This is a candidate/test configuration only. The default `RangerCr10TeleopEnvCfg` and its
 `ranger_cr10.usd` are untouched. The candidate USD is built from
-`assets/ranger_cr10_simple/ranger_cr10_simple.urdf`; Link1--Link6 collision is a single oriented
-box per link, and the box_link platform has a solid box collider. Self-collisions are enabled for
-this candidate so the physical blocking can be measured; no PPO is run.
+`assets/ranger_cr10_simple_v2/ranger_cr10_simple_v2.urdf`; Link1--Link6 collision is a single
+oriented box per link with joint-end retreats, and box_link has the enclosure body up to its lid
+plus a small top-accessory box; the right mounting plate collision was removed per user request
+(visual only). Self-collisions are enabled for this candidate so the
+physical blocking can be measured; no PPO is run. Filtered pairs are applied at rigid-body level
+by `scripts/ranger_cr10/apply_collision_filters.py`; collider-level filters were measured not to
+take effect in PhysX here.
 """
 
 from __future__ import annotations
@@ -33,9 +37,9 @@ from LeggedManip_Lab.tasks.manager_based.leggedmanip_lab.config.ranger_cr10.tele
 )
 
 _SIMPLE_DIR = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "../../../../../assets/ranger_cr10_simple")
+    os.path.join(os.path.dirname(__file__), "../../../../../assets/ranger_cr10_simple_v2")
 )
-SIMPLE_USD = os.path.join(_SIMPLE_DIR, "ranger_cr10_simple_flat.usd")
+SIMPLE_USD = os.path.join(_SIMPLE_DIR, "ranger_cr10_simple_v2_flat.usd")
 
 SIMPLE_RANGER_CR10_CFG = RANGER_CR10_CFG.replace(
     spawn=RANGER_CR10_CFG.spawn.replace(
