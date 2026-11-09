@@ -5001,7 +5001,7 @@ URDF `<box size>` 为完整边长, 中心/方向均在各自 link frame。v1→v
   (0.4926 m³)。AABB 仍是过填的视觉/代理形状, 但这是用户要求保留的上一版; 本轮不再缩小。
 - 1800 姿态上臂-底盘最小距离: Link1 52.05 mm、Link2 59.0 mm、Link5 24.14 mm, 全为正;
   底盘-轮/转向的 body filter 不变。简单代理的全局计数回到 `TP81/FP164/FN0` (margin
-  `TP186/FP113/FN4`), row-pair 仍是 tolerance 31/81、margin 60/190。
+  `TP186/FP113/FN4`), row-pair 是 tolerance **20/81**、margin **42/190** (union 修正后)。
 - 本轮曾实现并量过 0.98 缩放凸包 + MuJoCo hull proxy (体积 0.3135 m³, 1800 姿态
   Link1 55.3/Link2 62.2/Link5 68.3 mm; 全局 tolerance 变为 FN1 P0024), 但**用户要求
   回退**, 该 trial 不在当前候选中; 相关截图已标 `chassis_shrink_*_SUPERSEDED.png`,
@@ -5122,9 +5122,10 @@ URDF `<box size>` 为完整边长, 中心/方向均在各自 link frame。v1→v
 - 20 mm 裕度的**全局** FN 是另外四例: **D0106, D0109, D0157, D0264**; 参考距离 5.40/15.17/3.66/13.60 mm,
   row-pair 新距离 48.5/67.3/88.9/150 mm, winner 分别为 Link3/4/6↔lidar。这四例是真正的 false-safe。
 - 固定近接触集 342 行 (参考标签未改):
-  - 全局 tolerance TP81/FP164/FN0/TN97; 全局 margin TP186/FP113/FN4/TN39;
-  - **row-pair tolerance TP50/FP9/FN31/TN252; row-pair margin TP130/FP33/FN60/TN119**;
-  - FN 31 = 20 个 Link3 + 11 个 Link6; Link2/4/5 无 row-pair FN;
+  - 全局 tolerance TP81/FP166/FN0/TN95; 全局 margin TP186/FP113/FN4/TN39;
+  - **row-pair tolerance TP61/FP10/FN20/TN251; row-pair margin TP148/FP39/FN42/TN113**;
+  - FN 20 = 20 个 Link3; Link6 的 11 个是聚合 bug 造成的假 FN (改为 atomic geom union 后
+    主盒已覆盖, Link6 row FN=0); Link2/4/5 无 row-pair FN;
   - 20 个 Link3 FN 的参考交叠三角形质心都在 Link3 局部 x **-0.5738..-0.6101**, 全部落在
     v2 盒远端 -0.554 之外, 即 **刻意退让的 joint4 区域**; 没有一例在主杆 x∈[-0.554,0.006] 内。
     不把这段 joint4 空隙重新填满来消 FN。
@@ -5133,8 +5134,8 @@ URDF `<box size>` 为完整边长, 中心/方向均在各自 link frame。v1→v
 - 非有限值 0, unknown 0, 失败 0; 单位/轴/阈值/列映射已逐行导出到
   `near_rows_v2.csv`/`replay_rows_v2.csv`。
 - **结论: 新简化距离代理不能作为奖励/安全代理。** 全局 tolerance FN0, margin FN4;
-  row-pair 仍有 31/81 tolerance miss、60/190 margin miss; 其中 Link3 的 miss 全部是关节
-  退让, Link6 是另一个 11 例残差 (紧凑腕部盒)。
+  row-pair 仍有 20/81 tolerance miss、42/190 margin miss; Link3 的 miss 全部是 joint4
+  退让; Link6 的 11 例已证明是聚合 bug, 主盒修正后 FN0。
 
 ### 36.8 判断与下一步
 
@@ -5149,8 +5150,9 @@ URDF `<box size>` 为完整边长, 中心/方向均在各自 link frame。v1→v
   `base_link_col` 为 AABB 盒 (0.4926 m³)。0.98 缩放 trial 已按用户要求回退, 不在当前候选;
   1800 姿态臂-底盘最小距离 Link1 52.05 / Link2 59.0 / Link5 24.14 mm, 全正。
 - **右安装板: 碰撞体已按用户要求删除 (visual only), 不再有板面碰撞测试; N/A。**
-- **距离代理: 不通过。** row-pair tolerance 31/81、margin 60/190 漏检; 全局 tolerance FN0、
-  margin FN4; Link3 全在 joint4 退让区, Link6 11 例; 不能替换 `safety.py`, 不能据此启动 PPO。
+- **距离代理: 不通过。** row-pair tolerance **20/81**、margin **42/190** 漏检; 全局 tolerance
+  FN0、margin FN4; Link3 全在 joint4 退让区; Link6 的 11 例是聚合 bug 的假 FN, 修正后为 0;
+  不能替换 `safety.py`, 不能据此启动 PPO。
 - **小规模并行: 可以有条件进入“仅自碰撞验证”** (例如 64 env, 不做 PPO/不替换 reward),
   因为单环境稳定性、过滤、box_link 跟随和局部阻挡已通过; 但**不能**进入训练或代理替换。
 - 默认 `model_9999`、默认 TELEOP-WBC、默认 USD、`safety.py`、Actor/Observation/reward/action/
@@ -5165,3 +5167,632 @@ URDF `<box size>` 为完整边长, 中心/方向均在各自 link frame。v1→v
 `reset_base.json`、`block_box_*.json`、`block_arm_front_*.json`、`block_over_on.json`、
 `block_plate_on.json`、`distance_proxy_comparison_v2.json`、`near_rows_v2.csv`、
 `replay_rows_v2.csv`、`link3_miss_localization.json`。
+
+## 37. SIMPLECOLL v2 第二轮: 64-env 纯仿真与独立奖励代理补盒(2026-11-07)
+
+### 37.1 冻结的物理候选
+
+本轮不改变已通过单环境测试的物理几何:
+
+- `assets/ranger_cr10_simple_v2/ranger_cr10_simple_v2_flat.usd`, sha256
+  `683cd45d17bce99002703d61d11531c96d8532ee6a9c453523d78c7b412c9739`, 22,873,689 B;
+- 23 rigid bodies、30 colliders、**77 个 body-level filtered pairs**、0 broken target;
+- 实际导入 stage 的 `physxArticulation:enabledSelfCollisions=True`;
+- 底盘为上一版(URDF/PhysX 未缩放凸包, MuJoCo AABB 盒); 机械臂为 v2 joint-retreat 盒;
+  `box_link` 为左舱体 + 顶部小附件, 右安装板仅 visual; 未重新引入 0.98 缩放、未恢复右板碰撞。
+
+本轮两套表示严格分开: **PhysX 物理碰撞体**是上述 v2; **奖励/距离代理**只在离线的
+`scene_simple_v2_proxy.xml` 中加局部小盒, 不写入 URDF/USD, 不影响已通过的物理配置。
+右安装板保持 **visual only**, 其物理阻挡由已有的 `base_link_col` 承担; 代理的 protected
+列表包含 `base_link_col`, 不重复添加安装板代理。顶部小附件未覆盖的 p1/p2 等残余
+(494 个采样表面点) 是另一个近似误差, 不与右板混为一谈。
+
+### 37.2 64-env 协议与动作语义
+
+- `num_envs=64`, seed 0; `sim.dt=0.005 s`, `decimation=20`, 控制周期 **0.1 s (10 Hz)**.
+- 初始化为固定 home 关节 + 固定 base 位姿; 关闭 reset 随机化、gain 随机化、`base_contact`、
+  `bad_orientation`、`time_out`.
+- **动作语义先核对**: `use_default_offset=False`, 所以 zero action 会把关节目标驱动到 0,
+  **不等于 hold**; 全部测试显式构造 `hold = zeros; arm=current_q/0.25; base=0`.
+  夹爪不在动作向量中, `gripper_finger1_joint` 的 target=0、actual≈3e-5 rad, 已记录.
+- 接触判定: 全 env 读 ContactSensor 的 body net force; 阈值 100 N; 轮地接触单列允许(最大
+  ~1.12 kN). detail env 0–3 另建 exact body-pair RigidContactView, 记录 pair/position/normal/
+  separation; 其余 env 用 body net force 判异常.
+- **目标 vs 实际记录**: 第一步之前 `joint_pos_target` 的 arm buffer **全为 0**, 实际关节是
+  home (0.236, 0.086, -2.398, -0.83, -1.335, 0), 这直接证明 zero action 不是 hold; 发出
+  hold 后 target 回到 home, 200 步实际与初始最大差 0.00932 rad. base action 为 (0,0), 实测
+  平均速度约 (-0.0014, -0.0037, -0.0002) m/s; 夹爪 target 0, actual 初始 0.0326 rad,
+  稳定后 2.8e-5–3.5e-5 rad.
+
+### 37.3 64-env 结果
+
+| 阶段 | 结果 |
+|---|---|
+| 全部 hold 200 步 | worst base 32.0 mm (env 12), worst arm 0.00932 rad (env 33); base/arm force 0; **无异常接触**; 无非有限值 |
+| 全部 reset | 立即 base z 全为 0.4071 m; 20 步后 0.40707–0.40740 m; arm offset ≤0.0091 rad; 无异常 |
+| 部分 reset 8 env | reset envs base z 0.4071 m、arm offset 0; 非 reset envs 最大位移 6.3 mm; 无异常 |
+| 小正弦 240 步 | worst base 5.1 mm, worst arm 0.0522 rad; 无异常 |
+| 底盘 vx=0.2 40 步 | worst base 0.332 m, worst arm 0.00964 rad; 无异常 |
+| env 0 左舱体阻挡 | target error 0.4772 rad, pair +5.78 µm, 首接触 step 75 `base_link↔cr10_Link2` |
+| env 1 Link3↔Link6 | target error 0.2788 rad, pair +3.25 µm, 首接触 step 104 `cr10_Link3↔cr10_Link6` |
+| 其余 env | 无异常接触; detail envs 无跨 env body pair |
+
+- **每 env 资产检查**: 64 个 env 的 self-collision 全为 true; 每个 env 23 个 rigid body,
+  23 个带 filtered targets; unique 配置 1 套; `env_assets=pass`.
+- **性能** (预热 10 步, 计时 50 步): RTX A6000 51.03 GB 总显存, 结束后 free **39.05 GB**
+  (总占用约 **11.98 GB**), torch allocator peak 0.0337 GB; **控制步 0.1689 s**, 物理步估算
+  **8.44 ms**, 吞吐 **379.0 env control steps/s** (per-env 5.92 Hz), **7,581 physics
+  steps/s**. FPS 定义: "control FPS = 全部 env 合计的 env control steps/s; per-env control
+  rate 相同". 性能随机器负载有约 5% 波动; 这是最后一轮实测值.
+- **单 env 同协议基线**: 控制步 0.1641 s, 物理步 8.204 ms, 6.09 env steps/s, 总占用约
+  12.24 GB. 64 env 的控制步只比 1 env 慢 **2.9%**, 但吞吐是 64 倍 env 数.
+- **判定: 64-env 纯仿真通过** (hold/reset/partial reset/motion/base/blocking/env assets 全 pass;
+  无非有限值、无异常接触、无跨 env 串扰). 没有调用 PPO、没有更新网络、没有改默认部署.
+
+### 37.4 距离代理的 union 聚合更正
+
+本轮在补盒前发现并修正一个**聚合错误**:
+
+- 旧 `new_distances` 用 `(arm, protected)` 作 key, 同一 Link 的多个 geom 依次覆盖; Link6 的
+  5 个 geom 最后只剩 `d455_link_col`, **Link6 主盒被丢掉**.
+- 改为逐 atomic geom 存 `(distance, arm, geom, protected)`, `best_of` 取该 Link 的 union
+  min, 并保留获胜 geom; 这正是本轮要求的“主盒+补盒按并集计算, 保留获胜原子子对”.
+- 修正后 v2 主代理的 342 行结果:
+
+| 表 | TP | FP | FN | TN | miss rate |
+|---|---:|---:|---:|---:|---:|
+| 全局 tolerance | 81 | 166 | 0 | 95 | 0 |
+| 全局 margin | 186 | 113 | 4 | 39 | 2.1% |
+| **row-pair tolerance** | **61** | **10** | **20** | **251** | **24.7%** |
+| **row-pair margin** | **148** | **39** | **42** | **113** | **22.1%** |
+
+- 之前的 **31/60 和 Link6 11 个漏检是错的**: Link6 主盒已覆盖那 11 个参考交叠; 修正后
+  Link6 row tolerance FN=0. 剩余 20 个 tolerance FN 全部是 Link3 joint4 退让区
+  (x -0.5738..-0.6101, 盒端 -0.554 之外); margin FN 42 包含 Link3 和 D0154–D0264 等.
+- 全局 margin FN 仍是 D0106/D0109/D0157/D0264; P0021–P0024 的全局 winner 仍是
+  Link5↔base_link(-37.6/-37.5/-37.5/-38.6 mm), row-pair Link3-lidar 42.29–52.93 mm.
+- **“逐对漏检、全局检出”的归因**: 20 个固定集 row tolerance FN 的全局 winner 是
+  D0090 `Link6|d455|base_link` (-70.5 mm) 和 P0020–P0046 `Link5|main|base_link`
+  (-37.1..-107.3 mm); 新集 15 个是 N0001 `Link6|d455|base_link` 和 N0013–N0031
+  `Link5|main|base_link`. **没有一个是 Link3-lidar**; 所以全局 unsafe 是另一个真实
+  接触(Link5/6 与底盘), 不能算作 Link3-lidar 被检出. 这也说明为什么必须逐对报告.
+
+### 37.5 独立奖励代理补盒
+
+补盒只在 `scene_simple_v2_proxy.xml` (以及 `..._l3l6.xml`), 不写 URDF/USD; 物理候选不变.
+旧 A 是全局 minimum 代理, 没有独立的逐对表; 逐对表只对 v2/patch 成立, 旧 A 只给全局表。
+
+| 候选 | Link3 补盒 | Link6 补盒 | 固定集 row tolerance | 固定集 row margin | 新集 row tolerance | 新集 row margin |
+|---|---|---|---|---|---|---|
+| v2 主盒 | — | — | 61/10/20/251 | 148/39/42/113 | 11/3/15/42 | 17/2/13/39 |
+| L3 wide | center (-0.585,0,0.010), size (0.060,0.100,0.080) | — | **81/25/0/236** | 168/56/22/96 | **26/6/0/39** | **30/2/0/39** |
+| L3 tight | center (-0.592,-0.012,-0.010), size (0.042,0.060,0.024) | — | 80/17/**1**/244 | 168/48/22/104 | 23/5/**3**/40 | 30/2/0/39 |
+| L3 wide + Link6 | 同上 | center (0.0025,0,-0.020), size (0.095,0.080,0.050) | 81/30/0/231 | 169/61/21/91 | 26/6/0/39 | 30/2/0/39 |
+
+- **L3 wide** 消除全部 20 固定 / 15 新集 row tolerance FN, 并修复 P0021–P0024
+  (pair -9.4/-10.4/-10.7/-19.8 mm); 代价是固定集新增 **15 tolerance FP + 17 margin FP**,
+  新集新增 3 tolerance FP、0 margin FP. Tolerance 新增的 15 个里 13 个在 0–30 mm、2 个是
+  `certified_culled >=30 mm` (D0114/D0126); **margin 新增的 17 个里 9 个是 certified_culled
+  >=30 mm、8 个在 20–30 mm**。因此 **margin 侧的远距离误报显著增加**, 不能自动接入奖励;
+  这是本轮补盒的主要取舍.
+- **L3 tight** 把固定集新增 tolerance FP 降到 7、margin FP 降到 9, 但 margin 新增的 9 个
+  仍有 6 个 certified_culled >=30 mm、3 个 20–30 mm; 同时留下 1 固定 / 3 新集 tolerance FN.
+  是“少误报但仍漏检且仍有远 margin FP”的取舍.
+- **Link6 补盒没有收益**: 主盒已覆盖 11 个参考交叠; 加上 Link6 patch 只在固定集多 5 个
+  tolerance FP 和 1 个 margin FP, 不修任何 FN; 不采用.
+- 全局 margin: L3 wide 仍漏 **D0157/D0264**; D0106/D0109 被补盒检出. 1800 回放上
+  v2 与 patch 都是 0 个 margin alarm (旧 A 379); 回放没有逐行 ground truth, 只作
+  proxy-to-proxy 差异.
+- 新验证集规则在本轮补盒**之前**固定: 31 个 reference-contact source 各 1 个 Gaussian
+  σ=0.03 rad 扰动 (非同一路径密集插值) + 30 个 operating pose + 10 个 uniform pose = 71 行;
+  26 contact, 38 certified culled, 0 unknown; `proxy_new_set.json`. 这 31 个 source 里 20 个是
+  Link3 真漏检, 11 个 Link6 在 union 修正后是额外接触覆盖 (不是真漏检); 新集仍然覆盖两类区域,
+  但不把 11 个 Link6 当作补盒 FN 依据.
+
+### 37.6 判断
+
+- **单环境物理验证: 通过** (hold/motion/reset/base/blocking; 0 自接触).
+- **64-env 物理验证: 通过** (全部阶段; 77 body filters/self-collision 每 env 生效; 无异常
+  接触/非有限值/跨 env 串扰; 最新一轮 64 env 控制步比 1 env 慢 2.9%, 运行间有约 5% 波动; 以
+  §38 的固定协议表述为准, 不外推到随机初始化/任意动作/所有规模).
+- **奖励距离代理验证: 不通过**. L3 wide 能消全部 row tolerance FN, 但固定集新增 15
+  tolerance FP / 17 margin FP; tight 版本少 FP 但留 FN; Link6 patch 无收益; 全局 margin
+  仍漏 D0157/D0264. 不能替换 `safety.py` 或接入 reward.
+- **是否具备后续训练配置条件: 物理侧已经在固定协议下完成 64-env 验证; 本轮不再写
+  “尚可准备小规模并行验证”**. 训练/PPO 仍不可以, 且需先按 §38 把奖励几何从 A（原始网格）
+  切换到 B（冻结 PhysX collider）或明确接受 A 的剩余差异; 本轮不启动 PPO, 不自动替换
+  `safety.py`, 不提交/推送.
+
+产物: `validation_64env.json`、`validation_1env_baseline.json`; 64-env 汇总见
+`proxy_patch_summary.json`; `distance_proxy_comparison_v2.json`、`distance_proxy_patch_l3.json`、
+`distance_proxy_patch_l3_tight.json`、`distance_proxy_patch_comparison.json`、
+`proxy_new_set.json`、`proxy_new_set` 行 CSV、`scene_simple_v2_proxy.xml` / `..._l3l6.xml`.
+
+## 38. SIMPLECOLL v2 第三轮: 物理一致的独立距离代理与标签口径修正(2026-11-07)
+
+### 38.1 先修正逐对/全局口径
+
+上一轮把两种不同的量放进了同一张混淆矩阵: 342/71 行的参考只是 `arm_link ↔ lidar_link0`
+的原始网格参考, 而“全局”代理取所有 arm/protected 对子的最小距离. 这不是同一个逻辑对子,
+所以“全局 FP/FN”不能由这两者直接计算. 本轮固定如下口径:
+
+- **逐对**: 预测和参考必须是同一个逻辑对子; Link 内多个原子形状取 union min, 并保留获胜
+  的原子子对. Link6 的原子形状包括主盒、AG95 掌、D455 和 8 个手指体, 共 11 个.
+- **全局**: 任一参考对子确认阳性 → 全局阳性; 只有声明范围内**所有**相关对子都有有效阴性
+  时才判全局阴性; 否则 unknown. 另一个代理对子报警只能叫“代理报警”, 除非该对子的参考
+  也确认阳性, 否则不能称为真实接触.
+- **A 参考**: 原始 arm/lidar 网格; 只覆盖 arm-lidar, 不是完整全局参考. A 的逐对结果保留,
+  不改名、不删除.
+- **B 参考**: 冻结 PhysX collider 形状 (cube 或 `convexHull` mesh) 的精确 GJK 查询. 本轮新增
+  的候选是 B; B 通过不等于 A 通过.
+
+因此 A 的全局标签在“该行 arm-lidar 为 safe”时是 **unknown**, 不能算 TN/FP. 固定集 342 行中
+A margin 确认阳性的只有 190 行, 其余 152 行全局 unknown; 新集 71 行为 30/41; 1800 回放为
+0/10800. 上一轮所谓“全局 margin FN D0106/D0109/D0157/D0264”必须按 B 重新核对:
+
+- D0106: A 的 Link3-lidar 5.40 mm (margin unsafe), B 的同一对 48.52 mm (safe); B 全局
+  **unsafe**, 由真实非相邻对 `Link3↔Link5` 19.08 mm 确认. 不是全局 FN, 但也不是
+  “Link3-lidar 被检出”.
+- D0109: A 的 Link3-lidar 15.17 mm (margin unsafe), B 同一对 67.30 mm (safe); B 全局
+  **safe** (最近为 Link3↔Link5 25.95 mm). 上一轮的“全局 margin FN”是 A 单对口径造成的
+  partial-scope 误判, 不是 B 的全局 FN.
+- D0157: A 的 Link4-lidar 3.66 mm, B 同一对 88.93 mm; B 全局 **unsafe**, 由
+  `Link1↔Link6` 接触确认. 不是全局 FN.
+- D0264: A 的 Link6-lidar 13.60 mm, B 同一对 33.25 mm; B 全局 **unsafe**, 由
+  `Link4↔Link6` 16.16 mm 确认. 不是全局 FN.
+
+D0157/D0264 与剩余 42 个 A margin 逐对漏检**分开记录**; 修好两个全局样本不代表逐对解决.
+
+### 38.2 从实际 USD collider 构建代理
+
+以 flat USD 的**实际 body 层次 collision prim**为准 (不是 `/colliders` 源副本, 也不是
+`/rangercr10lidar` 的 body frame):
+
+- 实际 30 个 collider: base_link 6 (ranger 凸包、左舱体盒、顶部附件盒、cr10_base 凸包、
+  lidar 凸包、D435 盒), Link1–5 各 1 盒, Link6 3 (主盒、AG95 凸包、D455 盒), 8 个手指
+  凸包, 以及 8 个轮/转向凸包.
+- 训练内部障碍范围只取 22 个: 6 个 base + 5 个 arm 盒 + Link6 3 + 8 个手指; 8 个轮/转向
+  明确列为 out-of-scope, 不静默用更大盒子替代.
+- **关键坐标系**: 实际 collision prim 的 `mesh_0/mesh_1/...` 局部变换在 **URDF link frame**;
+  MuJoCo 的 body frame 也是该 link frame. USD 的 rigid-body frame (`/rangercr10lidar/<body>`)
+  是另一种等价约定, 不能把 collider 先转到 body frame 再放回 MuJoCo——那会把 arm 盒旋转
+  90°, 使 D0106 的 Link3-lidar 从 48.5 mm 变成 263 mm. 本代理直接使用 collisions scope 的
+  link-local 链积.
+- 底座不再使用 MuJoCo 的 AABB 盒, 而是实际 `ranger_base_link.STL` 的 convexHull (175 个
+  hull 点); 同理 cr10_base/lidar/AG95/手指都用实际凸包. 这是本轮与上一轮 v2 MuJoCo 模型的
+  最大区别.
+- 固定关节合并: box_link/cr10_base_link/lidar_link0/d435_link → base_link;
+  gripper_base_link/d455_link → cr10_Link6. 过滤依据仍为已测有效的 77 个 body-level pairs.
+- 逻辑对子表 44 个 active: 10 个非相邻 arm-arm + 34 个 arm-protected. 相邻 arm 对、Link6-
+  手指装配、轮/转向装配排除; `Link1↔chassis` 与 `Link1↔cr10_base` 作为 joint1 结构安装对
+  排除 (与旧 `collision_parts.STRUCTURAL` 一致). PhysX 因 cr10_base 合并进 base_link 而仍
+  检查 Link1-cr10_base; 这是奖励口径的结构性排除, 不是物理过滤.
+- 未发现不支持的 relevant 形状; 22 个全部是 cube 或 `convexHull`, 没有 unknown B 标签.
+- 映射表: `collider_proxy_map.json` / `.csv`; 代理模型:
+  `ranger_cr10_simple_v2_physproxy.xml`, `scene_simple_v2_physproxy.xml`.
+- union 回归通过: Link6 11 个原子形状, 名称唯一, 改变遍历顺序结果不变, 加一个 100 m 外的
+  合成组件不会改变最小值; Link6 子族在 48 个 near 行中实际获胜次数为
+  main 34 / AG95 9 / D455 3 / 手指 1+1.
+
+### 38.3 结果: B 与 A 分开
+
+固定集 342 行:
+
+| 统计 | 参考 | TP/FP/FN/TN | 说明 |
+|---|---|---|---|
+| 逐对 tolerance | B 实际 collider | 67/0/0/275 | proxy 与 B 完全一致 |
+| 逐对 margin | B 实际 collider | 187/0/0/155 | 完全一致 |
+| 全局 tolerance | B 实际 collider | 259/0/0/83 | 完整 44 对覆盖 |
+| 全局 margin | B 实际 collider | 312/0/0/30 | 完整 44 对覆盖 |
+| 逐对 tolerance | A 原始网格 | 60/7/21/254 | B proxy 相对 A 的差异 |
+| 逐对 margin | A 原始网格 | 148/39/42/113 | 42 个 A margin 漏检 |
+
+新集 71 行 (局部扰动, 不是独立全局证据):
+
+| 统计 | 参考 | TP/FP/FN/TN |
+|---|---|---|
+| 逐对 tolerance | B | 14/0/0/57 |
+| 逐对 margin | B | 19/0/0/52 |
+| 全局 tolerance | B | 34/0/0/37 |
+| 全局 margin | B | 49/0/0/22 |
+| 逐对 tolerance | A | 11/3/15/42 |
+| 逐对 margin | A | 17/2/13/39 |
+
+- B 的逐对距离误差 (仅 exact separated, 且双方 <50 mm): 固定集 n=221, P95 3.52e-9 m,
+  max 7.19e-9 m; 新集 n=17, max 3.77e-9 m. 这说明 MuJoCo 表示、link-local 映射和 union
+  聚合与 B 参考一致, 不是“换标签让 A 通过”.
+- A 的 21 个 fixed tolerance FN 包含 20 个 Link3 joint4 退让区和 D0252 Link6; 42 个
+  fixed margin FN 是原 A 口径的 margin 漏检. 这些是 **A-vs-B 几何差异**, 不是 B-vs-PhysX
+  误差; 若目标是保护原始网格, 它们仍然存在.
+- 1800 回放: A 的 arm-lidar 逐对参考全部 safe (0 contact; 37 exact); B 逐对也全部 safe.
+  B 全局 margin 为 4146 unsafe / 6654 safe (10800 pair-steps), 对应 **691 个姿态**; 全部由
+  非相邻 `Link4↔Link6` 确认 (2.56–20.00 mm), 不是 lidar. A 全局在这些姿态上是 unknown,
+  不能把 1800 的旧 Arm-lidar 报警当作全局 ground truth. 1800 的位姿/网格哈希与旧参考一致,
+  且 `scene.xml` vs `scene_simple_v2.xml` 在 50 个 operating pose 上 body pose 最大差 0,
+  所以 A 逐对参考可复用; B 是本轮新算的.
+- 目标诊断集 78 行 (规则先写 `phys_targeted_rule.json`, 再选): 42 个 A margin FN +
+  Link6 四个子族 + 32 个随机/operating 的 arm-box/chassis 样本; 覆盖 overlap/0-5/5-10/
+  10-20/20-30 mm. B 逐对 tolerance 8/0/0/70, margin 29/0/0/49; 全局 B 66/0/0/12 和
+  75/0/0/3; 56 个非 contact 行最大误差 8.67e-9 m; 8 个 contact 双方一致. 其中 2 行是
+  Link1-cr10_base 结构对, 标为 inactive; Link1-chassis/box_top 的随机近样本未找到, 如实
+  记录. A 在 46 个有 A 标签的样本上仍是 margin 42 FN (B 与 A 的几何差异), 32 个随机样本
+  无 A 标签.
+
+### 38.4 64-env 与性能口径
+
+64-env 物理测试记录为 **“在当前固定初始化、控制与测试协议下通过”**: 64 env, home 固定,
+10 Hz 控制, 显式 hold, 无 reset/gain 随机化和 termination; hold/reset/partial reset/
+motion/base/blocking 全 pass, 每 env self-collision true + 23 body-filtered prims, 无异常
+接触/非有限值/跨 env 串扰. 不把它外推为随机初始化、任意动作或所有规模均通过. 本轮没有
+重复完整 64-env 测试, 因为仿真配置未变.
+
+性能继续作为**测试脚本吞吐**, 并分开标注:
+
+- 控制步 0.16885 s; 由控制步 / decimation 得到的 **8.4425 ms 是平均摊销物理步耗时**,
+  不是独立测量的 PhysX kernel 时间.
+- GPU 总显存 51.03 GB; 进程级占用约 11.98 GB (总显存 - 结束后 free); torch allocator
+  peak 0.0337 GB. 三者不要混为一个数.
+- 379.03 env control steps/s (per-env 5.92 Hz), 7,580.69 amortised physics steps/s;
+  单 env 基线 0.16407 s, 64 env 慢 2.9%. 这是测试脚本吞吐, 不是 PPO 训练性能; 没有用
+  viewer/debug 查询的吞吐冒充训练性能.
+
+### 38.5 接触时序与 offset
+
+2-env 诊断重复 120 步 blocking 插值 (不是替换 64-env):
+
+- 实测每 collider contact offset 0.5–8.70 mm, rest offset 全 0; 不是统一的 20 mm, 也不能
+  假设为 0.
+- env0 (Link2 vs box_left): 实际首次 contact step 75, force>100 N step 75, proxy
+  contact-tolerance step 75, 20 mm margin step 69; 实际对子 `base_link↔Link2`, proxy
+  winner `Link2↔box_left`; 首次 contact 时 proxy 距离 0.
+- env1 (Link3 vs Link6): 实际首次 contact step 105, proxy contact-tolerance step 104,
+  20 mm margin step 96; 实际对子 `Link3↔Link6`, proxy winner 同一对; 首次 contact 时
+  proxy 距离 1.68e-6 m. 64-env 同路径记录为 step 104; 一个 0.1 s 控制步的差异来自
+  2-env/64-env 的采样, 不改变结论.
+- PhysX contact offset 可以在几何零距离之前生成 contact point; 本轮不把 offset 调成与
+  几何零距离数值一致, 也不把“提前生成”解释成几何错误. 这些路径上 force onset 与几何
+  零距离接近, 但 offset 仍应按实测值保留.
+
+### 38.6 判断
+
+- **单环境物理: 通过** (历史证据).
+- **64-env 物理: 在固定协议下通过**; 不外推.
+- **PhysX 一致代理 (B): 通过**——逐对/全局与 B 参考零 FP/FN, union 回归 pass, 距离误差
+  ≤8.7e-9 m; 实际接触对子/时序在同一路径上一致.
+- **原始网格代理 (A): 不通过**——固定集逐对 tolerance 21 FN / margin 42 FN, 新集 15/13;
+  A 全局 safe 行仍是 unknown. 这是简化 collider 与原始网格的差异, 不是 B 的失败.
+- **奖励/训练**: 本轮不接入 reward, 不替换 `safety.py`, 不启动 PPO. 若下一步保护 B
+  (冻结 PhysX collider 几何), 可以准备独立训练配置; 若仍要求保护 A (原始网格), 需先
+  决定是否接受 42/21 + 15/13 的剩余差异, 不能继续无目标地调 Link3 wide/tight.
+- 默认 `model_9999`、TELEOP-WBC、默认 USD、`safety.py`、Actor、Observation、reward 公式、
+  动作空间、初始姿态、D455 安装、键盘、workspace、`rangercr10-world` 未改; `M agx` 保留;
+  未提交/推送.
+
+## 39. 独立 SIMPLECOLL 训练候选: B 奖励接入与冻结策略 rollout(2026-11-07)
+
+### 39.1 接入方式
+
+本轮不再扩展几何研究, 直接把已冻结的 B 距离代理接入独立任务
+`RANGER-CR10-TELEOP-SIMPLECOLL`:
+
+- 新增 `mdp/phys_proxy_reward.py`: 从 `mujoco/robots/ranger_cr10/phys_proxy_shapes.json`
+  读取 22 个 relevant 实际 collider 形状 (Link6 包含主盒/AG95/D455/8 手指), 复用
+  `scripts/ranger_cr10/phys_proxy.py` 的 union-min GJK 查询, 覆盖 44 个 active 逻辑对.
+- 独立 config 只替换 `arm_sensor_clearance` 的实现: 公式仍为
+  `-(max(0, margin-d)/margin)^2`, weight 2.0, margin 0.02 m, cap 0.15 m. 默认
+  `RangerCr10TeleopEnvCfg`、默认 `safety.py`、默认 USD/部署资产没有改.
+- 接口检查: 距离单位 m, 接触为 0, 不依赖负穿透; Link 内原子形状 union-min; 64 环境
+  输出 `(N,)`, 设备跟随 `asset.data.joint_pos`; 查询失败/非有限值按 distance 0 (保守接触)
+  处理并计数, 不会当成安全距离. 2-env 2-step 检查通过: obs 117/action 8, B term 非零,
+  `SceneEntityCfg("robot")` 映射正确.
+- 稳定形状表由 `export_phys_proxy_shapes.py` 从 B 生成; `check_phys_proxy_reward.py`
+  在无 Isaac 进程中验证 D0106 Link3-lidar=48.5237 mm、全局 min Link3↔Link5=19.0839 mm、
+  D0000 contact=0 且 reward=-1.
+
+### 39.2 冻结策略 rollout
+
+`model_9999` (stage410f) 通过 RSL-RL `OnPolicyRunner` 加载, 只调用 inference policy,
+不更新参数. 64 env, seed 42, 200 控制步; 使用实际 SIMPLECOLL config 的 terminations 和
+startup/reset 随机化, 只冻结 command resampling 并将 observation corruption 关闭作为
+推理设置. 命令序列沿用 eval 的 HOLD/offset: 0-49 hold, 50-99 vx=0.25/wz=0.25, step 100
+显式 reset, 100-149 arm target +(0.10,0,0), 150-199 vx=-0.25 + target (-0.10,0.12,0).
+
+| 指标 | 结果 |
+|---|---|
+| policy load | 成功; obs 117 = actor input 117; action 8; actor obs normalization false |
+| NaN/Inf | 0 |
+| B query failures | 0 |
+| 控制步耗时 | mean 1.425 s, P95 1.600 s, min 1.193 s, max 1.891 s |
+| reset | 显式 reset 1 次 |
+| termination | `base_contact` 3 次; `time_out` 0; `bad_orientation` 0 (共 12,800 env-steps) |
+| 安全奖励 | sum -2.9061; mean -0.000227/env-step; min -0.2; 占负奖励绝对值 0.46% |
+| 其他主要项 | EE pos +5535.6, EE ori -222.0, lin vel +4409.6, ang vel +3183.6, action rate -6.28, torques -66.07 |
+| tracking | EE position mean 41.4 mm, P95 106.6 mm; orientation mean 0.0434 rad; velocity error ~3e-7 |
+| Link4↔Link6 | 79/12,800 env-steps <20 mm (0.62%); 0 contact; 是全局最近对 12,796/12,800 (99.97%) |
+| Link4↔Link6 安全贡献 | -2.3132, 占安全惩罚 79.6%; 距离分位 3.75/22.77/24.53/28.06/30.68/30.72/33.62 mm |
+| 其他报警对 | Link6-lidar 2 contact (-0.4); Link5-lidar 1 near (-0.1843); Link5-d435 2 near (-0.0086) |
+
+**Link4↔Link6 判读**: 它是“最近对”几乎每个 env-step, 但只有 0.62% 的 env-step 小于
+20 mm, 没有实际接触; 它占安全惩罚的 79.6%, 但整个安全项只占负奖励绝对值的 0.46%.
+home/常用姿态的 phase 平均距离为 30.30/30.53/27.53/23.01 mm (phase 0-3), 没有
+phase 平均低于 20 mm; 79 个低于 20 mm 的 env-step 是个别环境/过渡, 不是持续的大惩罚. 这不是误报, 也不是计算错误; 第一版保持 20 mm 和 weight 2.0, 不因
+报警数量过滤该对子或缩小碰撞体.
+
+### 39.3 判断
+
+- 独立配置可以创建、reset、step; B 距离确实进入 `arm_sensor_clearance`; `model_9999`
+  冻结推理正常; rollout 无未处理查询失败、NaN/Inf 或异常终止; 有奖励量级和实际成本.
+- **可以准备短程训练**. 主要成本是 CPU B 代理: 64 env 控制步约 1.43 s, 不是 GPU 加速
+  训练性能; 本轮不为此扩 GPU 碰撞系统.
+- 3 次 `base_contact` 终止是实际 config 的终止项, 占 12,800 env-steps 的 0.02%, 未构成
+  阻塞; 若短程训练中升高, 再单独定位, 本轮不关闭终止项.
+- 没有修改 `model_9999`、Actor、Observation、动作空间、默认初始姿态、D455 安装、键盘、
+  workspace 或 `rangercr10-world`; 未提交/推送.
+
+## 40. 独立 SIMPLECOLL 短程 PPO fine-tune 与同协议前后评估(2026-11-08)
+
+### 40.1 训练设置与结果
+
+从 `model_9999` 开始, 使用 checkpoint 自带的 `agent.yaml` 与其兼容配置:
+
+- 64 env, 新训练种子 `20261108`; 最多 50 次 PPO 更新, 墙钟预算 60 min.
+- 实际 horizon **24 steps/update**; PPO 配置打印在 `run_config.json`: 5 learning epochs,
+  4 mini-batches, configured LR 5e-4 / adaptive, gamma 0.99, lambda 0.95, entropy 0.005,
+  desired KL 0.01, clip 0.2, max grad 1.0.
+- actor/critic/optimizer/iteration 全部加载: actor 117->512->256->128->8, critic
+  68->512->256->128->1; optimizer 17 state entries; `runner_iter_after_load=9999`.
+  actor/critic 权重与 checkpoint 逐元素一致 (load report true).
+- 训练随机化和 terminations 按实际候选配置运行 (`time_out`, `base_contact`,
+  `bad_orientation`; startup/reset events); 未把评估时的冻结命令序列用于训练.
+- 实际更新 **50 次**, iteration 9999->10048, wall **1355 s (22.6 min)**, 76,800 env-steps,
+  388 completed episodes. 最终完整 checkpoint:
+  `.../2026-11-08_00-11-40_physproxy_short_ppo_50/model_10048.pt`.
+
+| 训练指标 | 结果 |
+|---|---|
+| collect / learn time | 27.03 s / 0.050 s per update (mean); P95 28.27 / 0.059 s |
+| loss value | 2.385 -> 1.075 (first10 -> last10 mean) |
+| actor surrogate | -0.0151 -> -0.0182 |
+| entropy | -5.8179 -> -5.8164 |
+| action std | 0.12724 -> 0.12726 |
+| actual LR | 1e-5 (max 2.25e-5); configured 5e-4 adaptive |
+| episode return / step | 0.9195 -> 0.9321 (+1.4%) |
+| termination events | time_out 384, base_contact 4, bad_orientation 0; completed 388 |
+| termination rate | base_contact 1.03% of completed episodes / 5.2e-5 of env-steps; time_out 98.97% of episodes / 0.005 of env-steps |
+| B query failures | 0 |
+| B safety sum | -1522.31 over 76,800 env-steps; first10 -0.0171 -> last10 -0.0223 per env-step |
+| Link4-Link6 | 36,087/76,800 env-steps <20 mm (47.0%); 0 contact; min pair 72,638 (94.6%) |
+| actual PhysX non-wheel contact | 3 env-steps / 76,800; 6 body events (body net force >100 N) |
+| actor/critic changed | actor 9/9 tensors (max abs 0.00552), critic 8/9 (max 0.01259) |
+
+训练链路稳定: 无 NaN/Inf、无 B 查询失败、无异常中止; 但训练内 B 安全项没有下降
+(first10 -> last10 反而更负), Link4-Link6 的 <20 mm 比例约 45% -> 46%.
+
+### 40.2 同协议前后评估
+
+同一 64 env / 200 control steps / eval seed 42 / 同一 HOLD/offset 命令序列 / 同一 reset
+规则 / 同一 observation 设置 (corruption off), original `model_9999` 与本轮
+`model_10048` 各跑一次:
+
+| 指标 | original model_9999 | candidate model_10048 | delta |
+|---|---|---|---|
+| policy load / obs / action | true / 117 / 8 | true / 117 / 8 | same |
+| EE position mean / P95 | 41.35 / 106.59 mm | 43.52 / 107.53 mm | +2.17 / +0.94 mm |
+| EE orientation mean / P95 | 0.04344 / 0.04909 rad | 0.04418 / 0.05327 rad | +0.00073 / +0.00418 rad |
+| safety reward sum | -2.906 | -3.171 | -0.265 (worse) |
+| safety share of negative | 0.458% | 0.490% | +0.032 pp |
+| Link4-Link6 <20 mm | 79 / 12,800 | 81 / 12,800 | +2 |
+| Link4-Link6 contact | 0 | 0 | 0 |
+| actual PhysX non-wheel contact | 2 env-steps / 5 body events | 4 env-steps / 9 body events | +2 / +4 |
+| terminated episodes | 3 (`base_contact`) | 4 (`base_contact`) | +1 |
+| NaN/Inf / B failures | 0 / 0 | 0 / 0 | same |
+| control step time | 1.387 s | 1.425 s | +0.038 s (run variation) |
+
+Actual PhysX contact is body-level (non-wheel net force >100 N), not a pair-specific
+contact view; the B geometry contact is separate. Numbers are small and the evaluation is
+short, so differences are observations, not statistically reliable safety changes.
+
+### 40.3 判断
+
+- **训练链路通过**: 50 次真实 PPO 更新发生, actor/critic/optimizer/iteration 正确加载和保存,
+  无 NaN/Inf/B 查询失败; 最终 checkpoint 完整可恢复.
+- **收益未确定**: 同协议短评估没有改善; candidate 的 EE position mean 差 2.17 mm、safety
+  sum 差 -0.265、Link4-Link6 <20 mm 多 2 个 env-step、actual non-wheel contact 多 2 个
+  env-step。差异很小, 不能宣称安全提升, 也不能据此证明显著退化.
+- **建议停止回退**: 不继续当前配置、不替换默认策略; 保留 `model_10048.pt` 仅作为实验记录,
+  继续使用原始 `model_9999`。若下一轮继续, 先针对一个明确问题做单变量对照: 实际 adaptive
+  LR 只有 1e-5 (配置 5e-4), 或安全项相对 tracking 太小 (0.46%-0.49% 负奖励); 本轮不自动启动
+  新实验或调参.
+- 训练输出在独立 `logs/rsl_rl/ranger_cr10_teleop/2026-11-08_00-11-40_physproxy_short_ppo_50/`
+  目录; 默认 `model_9999`、默认 TELEOP-WBC、`safety.py` 和部署资产未改, 未提交/推送.
+
+### 41. 训练 47% 与固定评估 0.62% 的差异归因（2026-11-08，只读 + 一组匹配分布冻结推理）
+
+目的：解释训练日志中 Link4-Link6 <20 mm 为 36,087/76,800（47.0%），而固定 HOLD/offset
+评估为 79/12,800（0.62%）。本轮不新增 PPO、不改几何/奖励/默认配置。
+
+#### 41.1 口径与日志核对
+
+- 训练 47.0% 的分母是 50 次更新 × 64 env × 24 steps = 76,800 env-steps；包含所有 env、
+  所有 rollout 步（含终止/reset 步）。per-update 范围 35.7%-57.9%，首次更新 42.1%，
+  first10 45.0%，last10 45.9%。它不是 episode 失败率。
+- 训练与固定评估的安全项都取 `reward_manager._step_reward[:, arm_sensor_clearance] * dt`，
+  再按 env-step 平均；单位相同。训练总体 -1522.31/76,800 = -0.01982/env-step
+  （first10 -0.0171，last10 -0.0223）；固定评估 -2.906/12,800 = -0.000227/env-step。
+- 主要协议差异：训练命令按 4-8 s 独立重采样，使用 stage-3 全箱（含 roll/pitch/yaw），
+  reset 时关节按 0.5-1.5 缩放并随机 episode 长度，policy observation corruption 开启；
+  固定评估把两个 command 的 resampling 冻结为 1e6，姿态固定为默认，只走 HOLD/offset
+  序列，corruption off，并在 step 100 显式 reset。
+
+#### 41.2 匹配训练分布的冻结推理对照
+
+64 env、200 control steps、seed 42、确定性 mean 推理、corruption off；保留训练命令生成
+（4-8 s、stage-3 box、30% replay、standing 0.25）、训练 reset/startup 随机化和
+`OnPolicyRunner.learn` 的随机初始 episode 长度。两个策略各一个进程；initial digest 相同，
+200/200 步 command digest 相同，12,800/12,800 配对 env-step 的 command 完全相等。
+
+| 指标 | original model_9999 | candidate model_10048 | delta |
+|---|---:|---:|---:|
+| Link4-Link6 <20 mm | 5,586 / 12,800 = **43.64%** | 5,627 / 12,800 = **43.96%** | +0.32 pp |
+| Link4-Link6 contact | 0 | 0 | 0 |
+| Link4-Link6 mean / P10-P50-P90 | 20.10 / 8.92-21.24-30.56 mm | 20.05 / 8.68-21.22-30.75 mm | -0.05 mm |
+| safety reward / env-step | -0.017691 | -0.017999 | -0.000308 |
+| EE position mean / P95 | 44.33 / 161.09 mm | 44.43 / 155.00 mm | +0.10 / -6.09 mm |
+| EE orientation mean / P95 | 0.06772 / 0.20134 rad | 0.07253 / 0.20837 rad | +0.00481 rad |
+| dones / termination | 65; time_out 63, base_contact 2 | 65; time_out 63, base_contact 2 | 0 |
+| actual non-wheel PhysX contact | 1 env-step / 2 body events | 1 / 2 | 0 |
+| NaN / B query failure | 0 / 0 | 0 / 0 | 0 |
+
+原始策略在训练分布下本来就是 43.6%，候选为 44.0%；训练日志的 47.0% 与这组结果一致。
+固定评估的 0.62% 不是同一任务分布：训练命令的旋转角中位数 45.8°、P95 64.8°，
+0-30°/30-45°/45-60°/>60° 的 <20 mm 比例分别为 26.0%/33.3%/50.1%/71.4%（original），
+而固定评估的姿态恒为 0°；“位置在 HOLD ±0.05 m 且姿态 ≤10°”的 HOLD-like 样本在
+12,800 个训练分布 env-step 中为 **0**。因此固定评估只覆盖默认姿态附近的窄切片，
+不能代表训练安全行为，也不能把 0.62% 当作策略退化证据。
+
+#### 41.3 学习率只读追踪
+
+- `model_9999.pt` 的 optimizer param group LR = **5.0625e-5**；`model_10048.pt` 为 1e-5。
+- `PPO.load` 加载 actor/critic/optimizer/iteration，但不恢复 `self.learning_rate`；构造值仍是
+  配置的 5e-4。adaptive KL 分支每个 mini-batch 用 `self.learning_rate` 覆写 param-group LR。
+  因而首次更新实际从 5e-4 开始，并在同一更新内被 KL 降到 **1e-5**；日志首值即 1e-5，
+  50 次更新范围 1e-5-2.25e-5。既是“checkpoint 里已经低”（5.06e-5），也是“首次更新内被
+  再次调低”（5e-4 -> 1e-5），两者是不同变量。
+- `PPO.update` 内部计算 `kl_mean`，但不写入 `loss_dict`，logger 也不记录；本次日志无法重建
+  每步 KL。下一轮训练前应单独加 KL 输出；不为此重跑本次 50 updates。
+
+#### 41.4 判断与下一步
+
+**原因判断**：47% 与 0.62% 的差异主要由评估命令分布造成，不是候选策略把 Link4-Link6 行为
+改坏了；original 在训练分布下已经是 43.6%，candidate 为 44.0%，差异很小。固定评估是
+部署式 HOLD 切片，应保留为次要指标，不能作为训练前后安全对比的主指标。
+
+**唯一实验建议**：先把主评估改为“匹配训练命令分布的冻结推理”（本 §41.2 协议），固定
+HOLD/offset 作为次要切片；训练参数保持不变。LR 恢复/adaptive 调度问题已确认，但它应作为
+下一次训练前的单独单变量问题处理，不与评估协议修正同时改。本轮不启动新 PPO，不替换默认
+部署，不覆盖 checkpoint。产物：`outputs/stage413/b/dist_explain/train_dist_original.json`、
+`train_dist_candidate.json`、`train_dist_comparison.json`、
+`RESULT_MANIFEST_DIST_EXPLAIN.json`；脚本
+`scripts/ranger_cr10/rollout_phys_proxy_training_dist.py`、`summarize_train_dist.py`。
+
+### 42. 学习率恢复一致性修正与同预算 50-update 对照（2026-11-09）
+
+目标只有一个：修正 checkpoint 恢复后 adaptive 调度器内部 LR 与 optimizer LR 不一致的问题，
+并验证它是否改变训练过程或策略效果。没有改奖励、碰撞几何、网络、命令分布或 PPO 超参数。
+
+#### 42.1 修正范围与恢复检查
+
+- 修改文件：`scripts/ranger_cr10/train_phys_proxy_short.py`。在 `runner.load()` 完成后、首次
+  `runner.learn()` 前，把 `alg.learning_rate` 设为恢复后的 optimizer param-group LR。
+- 没有修改安装环境里的 `rsl_rl`；没有清空 optimizer、没有重新初始化 critic、没有改 YAML LR。
+- optimizer 当前只有 1 个 param group；若存在多个不同 LR 的 group，修正代码会直接拒绝并报错，
+  不取平均、不静默统一。现有 scheduler 本身会把所有 group 覆写为同一个内部 LR。
+- 恢复检查（训练开始时实际打印）：
+
+| 检查项 | 值 |
+|---|---|
+| checkpoint optimizer LR | 5.0625e-5 |
+| 加载后 optimizer LR | 5.0625e-5 |
+| scheduler 内部 LR（修正前） | 5e-4 |
+| scheduler 内部 LR（修正后） | 5.0625e-5 |
+| param group 数 | 1 |
+| optimizer state 同步前后不变 | true |
+| actor / critic 权重同步前后不变 | true / true |
+| `first_update_precondition_ok` | true |
+
+训练前 `config_diff`：`behavior_diffs = {}`、`budget_diffs = {}`；预期变化只有 LR 恢复修正、
+LR/KL 日志和新输出目录。
+
+#### 42.2 新增 LR/KL 日志
+
+- `lr_kl.jsonl`：每个 update 的每个 mini-batch 一行，记录算法实际用于 adaptive 的
+  `kl_mean_used = mean(kl)`、同 batch 的 `kl_max/kl_min`、adaptive 分支前的 `lr_before`、
+  `optimizer.step` 后的 `lr_after` 及对应 param-group LR。
+- `train_metrics.jsonl`：每个 update 增加 `lr_schedule`（KL 均值/最大值、LR 最小/最大/最终值、
+  mini-batch 数、LR 变化次数）和首次 update 的完整 mini-batch 记录。
+- 旧训练没有 KL 日志，标为 missing；没有从最终 LR 反推，也没有重跑旧配置。
+
+#### 42.3 训练结果（同预算 50 updates）
+
+| 指标 | 旧实验 2026-11-08 | 本轮 LR-sync 2026-11-09 |
+|---|---:|---:|
+| checkpoint | old `model_10048.pt` | new `model_10048.pt` |
+| updates / wall | 50 / 1355.06 s | 50 / 1285.79 s |
+| env-steps | 76,800 | 76,800 |
+| completed episodes | 388 | 385 |
+| termination (time_out/base/bad) | 384/4/0 | 380/5/0 |
+| B query failures | 0 | 0 |
+| actual non-wheel PhysX contact | 3 env-steps | 0 env-steps |
+| value loss first10/last10 mean | 2.385 / 1.075 | 5.914 / 11.542 |
+| value loss first10/last10 median | 2.129 / 0.893 | 3.398 / 2.352 |
+| value loss spikes >10 | 1 / 50 (max 16.5) | 4 / 50 (max 39.1) |
+| surrogate first10/last10 | -0.0151 / -0.0182 | -0.0164 / -0.0114 |
+| entropy first10/last10 | -5.8179 / -5.8164 | -5.8174 / -5.8183 |
+| return/step first10/last10 | 0.9195 / 0.9321 | 0.9189 / 0.9345 |
+| B safety/env-step first10/last10 | -0.0171 / -0.0223 | -0.0212 / -0.0154 |
+| Link4-Link6 <20 mm first10/last10 | 45.0% / 45.9% | 46.7% / 39.5% |
+| logged LR first/last | 1e-5 / 1e-5 | 1e-5 / 1e-5 |
+
+首次 rollout 在两个实验中相同（同 seed、同起点、更新前）：return/step 0.8263、safety
+-0.01572、Link4-Link6 42.1%、episode length 10.4。差异从第一次 PPO 更新开始。
+
+首次 update 的 LR 路径（本轮）：
+
+```
+5.0625e-5 (before)
+-> 5.0625e-5, 7.59375e-5, 7.59375e-5, 5.0625e-5, 5.0625e-5, 5.0625e-5,
+   3.375e-5, 2.25e-5, 1.5e-5, 1e-5, ... , 1e-5 (20 mini-batches)
+```
+
+- 首次 update 的 `kl_mean_used` 路径从 0 开始，第二个 mini-batch 0.0021（LR 升到 7.59e-5），
+  之后 0.018-0.024，LR 逐步降到 1e-5；首次 update 的 KL 均值 0.01832、单样本最大值 0.67287。
+- 后续 update 的 KL 均值范围 0.01239-0.02061，单样本最大值 0.0595-0.3986；每次 update 内
+  LR 在 1e-5-2.25e-5 之间波动，最终仍为 1e-5；本轮所有 update 的 LR 最大值为 7.59e-5。
+- 旧实验没有 KL 日志；其内部首次 update 从 5e-4 开始，日志中的首次 post-update LR 为 1e-5。
+- 修正后权重轨迹确实改变：new-vs-old actor max/mean abs 0.00531/0.00272，critic
+  0.00577/0.00217；new 相对 model_9999 的 actor/critic 变化小于 old。
+
+结论：**恢复一致性问题已修复**；训练过程确实发生了变化（首 update LR、权重轨迹、value loss
+噪声），但这不是策略收益的证明。
+
+#### 42.4 三策略主评估（匹配训练命令分布）
+
+64 env、200 control steps、seed 42、确定性 mean、corruption off；initial digest 三个策略相同，
+original-vs-new command digest 200/200 相同。固定 HOLD/offset 未用于本轮判断。
+
+| 指标 | original model_9999 | old candidate model_10048 | new candidate model_10048 | new-original |
+|---|---:|---:|---:|---:|
+| Link4-Link6 <20 mm | 5,586/12,800 = 43.64% | 5,627/12,800 = 43.96% | 5,604/12,800 = 43.78% | +0.14 pp |
+| Link4-Link6 contact | 0 | 0 | 0 | 0 |
+| distance mean / P10-P50-P90 | 20.10 / 8.92-21.24-30.56 mm | 20.05 / 8.68-21.22-30.75 mm | 20.07 / 8.57-21.28-30.68 mm | -0.03 mm |
+| safety reward/env-step | -0.017691 | -0.017999 | -0.017806 | -0.000115 |
+| EE position mean / P95 | 44.33 / 161.09 mm | 44.43 / 155.00 mm | 45.22 / 159.92 mm | +0.89 / -1.17 mm |
+| EE orientation mean / P95 | 0.06772 / 0.20134 rad | 0.07253 / 0.20837 rad | 0.07030 / 0.20460 rad | +0.00258 / +0.00325 |
+| dones / termination | 65; 63 timeout, 2 base | 65; 63 timeout, 2 base | 65; 63 timeout, 2 base | 0 |
+| actual non-wheel contact | 1 env-step / 2 body events | 1 / 2 | 1 / 2 | 0 |
+| NaN/Inf / B failures | 0 / 0 | 0 / 0 | 0 / 0 | 0 |
+| step time mean | 1.125 s | 1.140 s | 1.111 s | -0.014 s |
+
+其他主要报警对子仍是 `Link3-Link5`（约 407 次 <20 mm，0 contact）和 `Link6-chassis`
+（1 次 contact）；Link4-Link6 仍是全局最近对子（约 94%-95% env-steps）。
+
+new-vs-old：Link4-Link6 比例 -0.18 pp、safety 更接近 0（+0.000193，略好）、EE position mean +0.79 mm、
+P95 +4.92 mm、orientation mean -0.00222 rad；接触和终止完全相同。差异很小，不能写成显著
+改善或退化。
+
+#### 42.5 判断与唯一后续选项
+
+- **工程恢复问题已修复**：checkpoint/optimizer/scheduler 的 LR 在首次更新前一致，optimizer
+  动量和 actor/critic 权重未被额外改动。
+- **训练过程发生变化**：首次 update 从 5.0625e-5 开始（旧为 5e-4），首 update 内短暂升到
+  7.59e-5 后降到 1e-5；后续 49 次 update 仍在 1e-5 下限附近；权重轨迹、value loss 噪声不同。
+- **策略效果没有改善**：new 在三策略主评估中介于 original 和 old 之间，43.78% vs 43.64%，
+  safety 每 env-step 差 -0.000115；不能宣称收益。
+- **推荐**：保留 `model_9999` 为默认策略，不自动部署新候选；不再自动增加 update 数。若还要
+  做一次训练，唯一选项是先做 50-update、固定 LR=5.0625e-5 的单变量对照，验证 adaptive 是否
+  在把有效学习率压到 1e-5；否则停止这个 PPO 方向。
+
+产物：`outputs/stage413/b/lr_restore/train_dist_new.json`、
+`lr_restore_comparison.json`、`RESULT_MANIFEST_LR_RESTORE.json`；训练 run
+`logs/rsl_rl/ranger_cr10_teleop/2026-11-09_22-14-55_physproxy_lr_sync_50/`；脚本
+`scripts/ranger_cr10/train_phys_proxy_short.py`、`summarize_lr_restore.py`。

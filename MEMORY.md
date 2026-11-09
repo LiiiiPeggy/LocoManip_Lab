@@ -548,15 +548,125 @@ gripper base and the lidar are **not closed**, so their containment is unknown r
   Link5 24.14 mm, all positive. A 0.98-scaled-hull trial was superseded and is not in the candidate.
   Two AG95 mimic `referenceJoint` targets
   were empty after conversion and are repaired to `gripper_finger1_joint` (7/7 now). Home hold/sinusoid/
-  resets/base motion on/off have **0 self-contacts** (hold base 31.6 vs 31.3 mm). Clean blocking: box lid
-  on 0.477 rad target error / +5.6 um vs off 0.027 / -104.7 mm; Link3-Link6 on 0.278 / +4.9 um vs off
-  0.024 / -36.0 mm; over-box +18.6 mm no contact (v1 box -91.5 mm); the right plate collider was
-  removed per user request, so its blocking test is N/A and the plate is visual only.
-  The simple distance proxy is **not** a reward proxy: row-pair tolerance 31/81 misses, margin 60/190;
-  global tolerance FN0 and margin FN4; all 20 Link3 misses are at the distal joint4 retreat,
-  plus 11 Link6. The superseded chassis shrink had added a P0024 false-safe (Link5 box +10.6 mm vs
-  real mesh -66.4 mm); the reverted chassis returns P0024 to -38.6 mm. P0021--P0024's old 1.19--18.62 mm
-  were the global Link5/4-vs-base minimum, not Link3-lidar (42.3--52.9 mm); global 20 mm false-safe rows
-  are D0106/D0109/D0157/D0264. Default USD/config/`safety.py`/deployment untouched; small-scale
-  self-collision-only parallel validation may proceed, but no PPO and no proxy replacement. Plan §36;
-  evidence `outputs/stage413/b/simple_collision_v2/validation_summary_v2.json`.
+  resets/base motion on/off have **0 self-contacts** (hold base 31.97 vs 25.40 mm). Clean blocking:
+  box lid on 0.479 rad target error / +5.0 um vs off 0.025 / -104.3 mm; Link3-Link6 on 0.280 / +0.5 um
+  vs off 0.022 / -36.0 mm; over-box +18.7 mm no contact (v1 box -91.5 mm); the right plate collider
+  was removed per user request, so its blocking test is N/A and the plate is visual only.
+  The simple distance proxy is **not** a reward proxy. **Union aggregation was fixed this round**:
+  the old `(arm, protected)` key let the last Link6 geom (d455) overwrite the Link6 main box, so the
+  "11 Link6 misses" were an artifact; atomic geom entries give row tolerance **20/81** and margin
+  **42/190** (global tolerance FN0, margin FN4). All 20 tolerance misses are Link3's joint4 retreat.
+  A proxy-only Link3 wide box (0.06x0.10x0.08 m at local (-0.585,0,0.010)) removes all 20 fixed /
+  15 new row tolerance FN but adds 15 fixed / 3 new tolerance FP and 17 fixed margin FP (9 culled >=30 mm); a tight
+  box still has 6 culled / 3 20-30 mm margin FP and leaves 1 fixed / 3 new FN. Link6 patch has no FN benefit and adds FP; global
+  margin still misses D0157/D0264. **64-env physical validation passed**: fixed home init, 10 Hz,
+  explicit hold (zero action is not hold), no terminations; hold worst base 32.0 mm / arm 0.0093 rad;
+  reset/partial reset/motion/base no abnormal contacts; env 0 box and env 1 Link3-Link6 blocking
+  reproduce; every env self-collision true + 23 body-filtered prims; control 0.1689 s vs 1 env
+  0.1641 s (+2.9%), 379.0 env steps/s, ~11.98 GB used. Default USD/config/`safety.py`/deployment untouched;
+  no PPO and no proxy replacement. Plan §36--§37; evidence
+  `outputs/stage413/b/simple_collision_v2/proxy_patch_summary.json` and `validation_64env.json`.
+- **The PhysX-consistent proxy is built from the flat USD's body-hierarchy collision prims in the
+  URDF link frame (2026-11-07).** The `/colliders` scope is a source copy; the instanceable
+  `collisions` child under each articulation body is what PhysX consumes. Its `mesh_0`/`mesh_1`
+  local xform chain is already in the URDF link frame, which is also the MuJoCo body frame. Do not
+  compose the USD rigid-body frame (`/rangercr10lidar/<body>`) into the shape pose: that frame is a
+  different convention and rotates the arm boxes by 90° (D0106 Link3-lidar becomes 263 mm instead
+  of 48.5 mm). The chassis is the actual unscaled `ranger_base_link` convex hull (175 hull points),
+  not the old MuJoCo AABB box. Fixed-joint merge: box_link/cr10_base_link/lidar_link0/d435_link →
+  base_link; gripper_base_link/d455_link → cr10_Link6. Proxy model:
+  `mujoco/robots/ranger_cr10/ranger_cr10_simple_v2_physproxy.xml` (22 relevant colliders; 8
+  wheel/steering colliders out of scope); map: `outputs/stage413/b/simple_collision_v2/
+  collider_proxy_map.json`.
+- **Per-pair and global labels are different objects (2026-11-07).** A row's reference is usually
+  one logical pair (e.g. arm-lidar); the global proxy takes the minimum over all active pairs.
+  Global is unsafe if any confirmed reference pair is unsafe; it is safe only if every pair in the
+  declared scope has a valid negative; otherwise unknown. A (original mesh) covers only arm-lidar,
+  so an A-safe row is global unknown, not TN. B (frozen PhysX collider shapes, exact GJK) covers the
+  44 active internal pairs. B passes: fixed row tolerance 67/0/0/275, margin 187/0/0/155, global
+  259/0/0/83 and 312/0/0/30; new 14/0/0/57, 19/0/0/52, 34/0/0/37, 49/0/0/22; distance error
+  ≤7.2e-9 m. A still has 21 tolerance / 42 margin fixed FN and 15/13 new FN; these are A-vs-B
+  geometry differences, not B failures. On 1800 operating poses B global margin flags 691 poses,
+  all from non-adjacent `Link4↔Link6` (2.56-20.00 mm); A arm-lidar is all safe there.
+- **Reward-scope exclusions are explicit and must not be confused with physical filters
+  (2026-11-07).** Adjacent arm pairs, Link6-to-finger assembly and wheel/steering pairs are filtered;
+  `Link1↔chassis` and `Link1↔cr10_base` are excluded as the joint1 structural mount (old
+  `collision_parts.STRUCTURAL`). PhysX still checks Link1-cr10_base because cr10_base merges into
+  base_link, so this is a reward-scope decision, not a claim that PhysX filters it.
+- **Contact offset is per-collider, not a uniform 20 mm (2026-11-07).** Measured on the frozen
+  candidate: 0.5-8.70 mm contact offset, rest offset 0. On two blocking paths the actual first
+  contact step was 75/105 and the proxy contact-tolerance step 75/104; the pair identity matched
+  (Link2-box/left, Link3-Link6). Do not tune offsets to make geometric zero and force onset equal.
+- **Performance wording for the 64-env test (2026-11-07).** 0.16885 s control step; 8.4425 ms is
+  the amortised physics step (control/decimation), not a PhysX kernel measurement. GPU total
+  51.03 GB, process-level ~11.98 GB, torch allocator peak 0.0337 GB. 379.0 env control steps/s
+  (5.92 Hz per env), 7,580.7 amortised physics steps/s; single-env baseline 0.16407 s (+2.9%).
+  This is test-script throughput, not PPO training throughput.
+- **The independent SIMPLECOLL training candidate uses the B distance as its safety reward
+  (2026-11-07).** `RANGER-CR10-TELEOP-SIMPLECOLL` replaces only `arm_sensor_clearance` with
+  `mdp/phys_proxy_reward.phys_proxy_clearance_penalty`: B shape table
+  `mujoco/robots/ranger_cr10/phys_proxy_shapes.json`, 44 active pairs, union-min, quadratic
+  `-(max(0, 0.02-d)/0.02)^2` at weight 2.0. The default teleop config and `safety.py` are
+  untouched. The term returns `(N,)` on the asset device; an unknown/approximate query is
+  conservatively treated as distance 0 (contact) and counted, never as safe. Use
+  `torch.no_grad`, not `torch.inference_mode`, around the rollout: the explicit reset at step
+  100 otherwise hits "Inplace update to inference tensor outside InferenceMode" in
+  `write_root_link_pose_to_sim`.
+- **Frozen model_9999 rollout on the independent config (2026-11-07).** 64 env x 200 steps,
+  seed 42, actual terminations/startup-reset randomisation, one explicit reset: policy loads
+  (obs 117 = actor input, action 8, no normalization); 0 NaN/Inf, 0 B query failures, 3
+  configured `base_contact` terminations, step time 1.425 s mean (CPU B proxy dominates).
+  Safety reward sum -2.906, only 0.46% of negative reward magnitude; EE position error 41.4 mm
+  mean. Link4-Link6 is the closest pair 99.97% of env-steps but is <20 mm in only 79/12,800
+  (0.62%), 0 contact; it contributes 79.6% of the safety term, but the safety term is small.
+  Keep 20 mm/weight 2.0; no filtering or geometry change. Short training can be prepared; CPU
+  reward cost is the expected cost, not a correctness blocker. Evidence:
+  `phys_reward_integration_summary.json`, `phys_reward_rollout.json`; plan §39.
+- **Short PPO fine-tune from model_9999 on the independent B reward did not show a benefit
+  (2026-11-08).** 64 env, seed 20261108, horizon 24, 50 updates, 1355 s, final
+  `physical.../model_10048.pt`; actor/critic/optimizer/iteration loaded correctly, gradients
+  occurred (actor 9/9, critic 8/9 tensors changed), no NaN/Inf/B failures. The actual adaptive
+  LR was 1e-5 (configured 5e-4). Same-protocol eval (64 env, 200 steps, seed 42): original vs
+  candidate EE position mean 41.35 -> 43.52 mm, orientation 0.04344 -> 0.04418 rad, safety sum
+  -2.906 -> -3.171, Link4-Link6 <20 mm 79 -> 81, actual non-wheel contact 2/5 -> 4/9
+  env-steps/body-events, base_contact terminations 3 -> 4. Training chain passed, benefit not
+  established; differences are small and not statistically reliable. Recommendation: stop/revert
+  to model_9999; keep model_10048 as an experiment only. If continuing, change one variable
+  (actual LR or safety weight) in a separate short run; do not auto-extend.
+- **The 47% training vs 0.62% fixed-eval Link4-Link6 difference is command distribution, not
+  policy degradation (2026-11-08).** Training aggregates 36,087/76,800 env-steps (all 50
+  updates, 64 env x 24 steps); the fixed evaluation freezes both commands and holds the default
+  orientation. A matched training-distribution rollout (64 env, 200 steps, seed 42, training
+  4-8 s resampling/stage-3 box, training reset/startup randomisation, deterministic mean,
+  corruption off) gives original 43.64% / candidate 43.96%, safety -0.017691 / -0.017999 per
+  env-step, identical commands (12,800/12,800). Training command rotation is median 45.8 deg /
+  P95 64.8 deg; <20 mm rate is 26.0% at 0-30 deg, 33.3% at 30-45, 50.1% at 45-60 and 71.4%
+  above 60. A HOLD-like position (+/-0.05 m) and orientation (<=10 deg) slice has zero samples
+  in 12,800 training-distribution env-steps. Use matched-distribution evaluation as the primary
+  safety metric and fixed HOLD/offset only as a deployment-like secondary slice. Evidence:
+  `outputs/stage413/b/dist_explain/`; plan §41.
+- **PPO.load does not restore the internal adaptive learning rate (2026-11-08).** Loading
+  `model_9999.pt` restores the optimizer param-group LR 5.0625e-5, but `self.learning_rate`
+  remains the YAML/constructor value 5e-4. The adaptive KL branch rewrites the param-group LR
+  from `self.learning_rate` each mini-batch, so the first update effectively starts at 5e-4 and
+  was lowered to 1e-5 during that update; all 50 logged updates then stayed at 1e-5-2.25e-5.
+  `kl_mean` is computed inside `PPO.update` but not returned/logged, so it cannot be
+  reconstructed from `train_metrics.jsonl`. Add KL logging before any future PPO; do not clear
+  the optimizer, disable adaptive, or raise the LR without a one-variable comparison.
+- **The adaptive scheduler LR restore inconsistency is fixed in the training script
+  (2026-11-09).** `PPO.load` restores the optimizer param group (5.0625e-5 from model_9999) but
+  leaves `self.learning_rate` at the YAML/constructor value 5e-4; the adaptive branch then
+  overwrites the param-group LR from that internal value. `train_phys_proxy_short.py` now syncs
+  `alg.learning_rate` to the restored optimizer LR after `runner.load`, before the first update,
+  and asserts a single param-group LR (different groups are rejected, not averaged). Optimizer
+  momentum and actor/critic weights are unchanged by the sync. First update started at
+  5.0625e-5, briefly rose to 7.59375e-5, then KL > desired_kl forced 1e-5; later updates
+  oscillate 1e-5-2.25e-5 and end at 1e-5. This fixes restore consistency but does not by itself
+  produce a policy benefit.
+- **LR/KL logging is now in the training script (2026-11-09).** `lr_kl.jsonl` records every
+  mini-batch's actual adaptive `kl_mean` (the same tensor used for the LR decision), batch
+  `kl_max/kl_min`, LR before the adaptive branch and after `optimizer.step`;
+  `train_metrics.jsonl` carries per-update aggregates. The old 2026-11-08 run has no KL data;
+  mark it missing and do not reconstruct it from the final LR. Large value-loss spikes in the
+  new run (4/50 >10, max 39.1) occurred without NaN/Inf or query failures but show that the
+  changed first update changed the optimization trajectory; do not call this a policy gain.

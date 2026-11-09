@@ -52,29 +52,34 @@ PROTECTED = ["base_link_col", "lidar_link0_col", "d435_link_col", "box_link_col_
 
 
 def new_distances(q):
-    """All arm-geom vs protected-geom distances at one pose."""
+    """All arm-geom vs protected-geom distances at one pose.
+
+    One entry per atomic geom: the union minimum per link must be taken explicitly,
+    otherwise the last geom in the list silently wins and a Link6 main-box overlap
+    can be replaced by the d455 distance.
+    """
     mujoco.mj_resetDataKeyframe(m, d, m.key("home").id)
     for a, v in zip(adr, q):
         d.qpos[a] = float(v)
     mujoco.mj_forward(m, d)
-    out = {}
+    out = []
     for arm, arm_geoms in ARM.items():
         for ga in arm_geoms:
             for gb in PROTECTED:
-                out[(arm, gb)] = float(mujoco.mj_geomDistance(m, d, idx[ga], idx[gb], 0.15, None))
+                out.append((float(mujoco.mj_geomDistance(m, d, idx[ga], idx[gb], 0.15, None)), arm, ga, gb))
     return out
 
 
 def best_of(distances, arms=None, protected=None):
     candidates = [
-        (value, arm, protected_geom)
-        for (arm, protected_geom), value in distances.items()
-        if (arms is None or arm in arms) and (protected is None or protected_geom in protected)
+        item
+        for item in distances
+        if (arms is None or item[1] in arms) and (protected is None or item[3] in protected)
     ]
     if not candidates:
-        return float("nan"), None, None
-    value, arm, protected_geom = min(candidates)
-    return value, arm, protected_geom
+        return float("nan"), None, None, None
+    value, arm, geom, protected_geom = min(candidates, key=lambda item: item[0])
+    return value, arm, geom, protected_geom
 
 
 def label(distance, threshold):
@@ -104,15 +109,15 @@ def main():
         q = json.loads(v2[row_id]["q"])
         old = float(v2[row_id]["A_distance_m"])
         distances = new_distances(q)
-        new, new_arm, new_protected = best_of(distances)
-        new_row, row_arm, row_protected = best_of(
+        new, new_arm, new_geom, new_protected = best_of(distances)
+        new_row, row_arm, row_geom, row_protected = best_of(
             distances, arms=[ref["arm"]], protected=["lidar_link0_col"]
         )
         ref_dist = ref.get("reference_distance_m")
         near_rows.append(dict(
             row_id=row_id, arm=ref["arm"], bin=ref["bin"], old_m=old, new_m=new, new_row_m=new_row,
-            new_winner=f"{new_arm}|{new_protected}" if new_arm else None,
-            new_row_winner=f"{row_arm}|{row_protected}" if row_arm else None,
+            new_winner=f"{new_arm}|{new_geom}|{new_protected}" if new_arm else None,
+            new_row_winner=f"{row_arm}|{row_geom}|{row_protected}" if row_arm else None,
             old_tol=label(old, 0.0), new_tol=label(new, 0.0),
             new_row_tol=label(new_row, 0.0),
             old_margin=label(old, 0.02), new_margin=label(new, 0.02),

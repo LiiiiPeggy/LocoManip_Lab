@@ -567,11 +567,145 @@ the original Link5 mesh still penetrated the unscaled chassis by 66.4 mm). Per u
 trial was reverted; the current candidate keeps the previous version: URDF/PhysX unscaled hull,
 MuJoCo AABB box. The 1800-pose arm-chassis minima are Link1 52.05 / Link2 59.0 / Link5 24.14 mm,
 all positive, and the global proxy is back to tolerance FN0/FP164, margin FN4
-(D0106/D0109/D0157/D0264); row-pair metrics remain 31/81 and 60/190.
+(D0106/D0109/D0157/D0264); row-pair metrics are corrected to 20/81 and 42/190 after the
+atomic-geom union fix (the earlier 31/60 came from the last Link6 geom overwriting the main box).
 
 The distance proxy still fails as a reward proxy even after the geometry: row-pair tolerance
-misses 31/81, margin misses 60/190. All 20 Link3 misses localise to the distal joint4 retreat
-(local x -0.574..-0.610, outside the box end -0.554); 11 Link6 misses remain in the compact wrist
-box. Filling the joint gap to remove them would reintroduce adjacent overlap, so it is not done.
-Single-env self-collision stability and the three clean blocking tests pass; a small-scale
-self-collision-only parallel validation may proceed, but no PPO and no reward-proxy replacement.
+misses 20/81, margin misses 42/190 after the union fix. All 20 Link3 tolerance misses localise
+to the distal joint4 retreat (local x -0.574..-0.610, outside the box end -0.554); the earlier
+"11 Link6 misses" was the last-geom overwrite (d455 instead of the Link6 main box), not a real
+gap. Filling the joint gap to remove the Link3 misses would reintroduce adjacent overlap, so it
+is not done.
+Single-env self-collision stability and the three clean blocking tests pass. The 64-env test was
+then completed under the fixed protocol (home, 10 Hz, explicit hold, no randomisation or
+terminations) and passed hold/reset/partial-reset/motion/base/blocking with every env confirmed to
+have self-collision and 23 body-filtered prims. That result is limited to the fixed protocol; it is
+not a random-initialization, arbitrary-action or all-scale guarantee. No PPO and no reward-proxy
+replacement were done.
+
+## 13. Stage 4.13b v2: 64-env validation and the proxy aggregation bug
+
+The single-env candidate was frozen and the 64-env test deliberately separated the action
+semantics from the usual policy convention. With `use_default_offset=False`, a zero action drives
+the arm joints to zero, so `hold` must be built explicitly (`zeros`, then `arm=current_q/scale`);
+the gripper is not in the 8-D action. The test used the same 5 ms physics, 20x decimation
+(10 Hz control) and fixed home pose as the single-env run, disabled reset/gain randomisation and
+all terminations, and used the body net force sensor for all 64 envs plus exact body-pair views
+for envs 0-3. It passed hold, all-reset, partial reset of 8 envs, small sinusoid, base motion and
+the two blocking targets. Every env was confirmed at runtime to have self-collision enabled and
+23 body-filtered prims. The final 64-env control step was 0.1689 s versus 0.1641 s for 1 env,
+i.e. only 2.9% slower for 64x the envs; throughput was 379.0 env steps/s and 7,581 physics
+steps/s, with about 11.98 GB total GPU memory used (RTX A6000; earlier run was 0.1775 s / 360.6
+env steps/s, so treat the percentage as run-to-run varying at the few-percent level).
+
+The proxy work then found an aggregation bug that invalidated the earlier per-pair misses. The
+distance function stored one value per `(arm, protected)` pair, so each successive geom overwrote
+the previous one; for Link6 the last geom was `d455_link_col`, and the Link6 main box was never
+used. The apparent "11 Link6 wrist misses" were therefore the d455 distance, not the main box.
+After storing `(distance, arm, geom, protected)` for every atomic geom and taking the union min,
+the v2 row counts became 61/10/20/251 tolerance and 148/39/42/113 margin; all 20 remaining
+tolerance misses are Link3 joint4-end points, and Link6 row tolerance FN is 0. The P0021--P0024
+Link3-lidar distances remain 42.3--52.9 mm, while the global winner is Link5-vs-base.
+
+The patch candidate was kept separate from the physical asset: the patch boxes live only in
+`scene_simple_v2_proxy.xml` and are not in the URDF/USD. The Link3 wide box removes all 20 fixed
+and 15 new row tolerance misses but adds 15 fixed/3 new tolerance false positives and 17 fixed
+margin false positives; the tight box lowers the fixed tolerance FP to 7 and margin FP to 9 but
+leaves 1 fixed/3 new tolerance misses. Adding a Link6 box gives no FN benefit and adds 5 fixed
+tolerance FP and 1 margin FP, so it is rejected. The global margin still misses D0157/D0264.
+The proxy is therefore an offline trade-off, not a reward replacement; no PPO was run.
+
+## 14. PhysX-consistent proxy round: the collider frame, global labels and contact offsets
+
+The previous round's global confusion matrix mixed two different objects. The 342/71 row
+references are arm-lidar original-mesh queries; the global proxy is the minimum over all
+arm/protected pairs. A row where arm-lidar is safe says nothing about arm-arm or arm-chassis, so
+its global label is unknown, not TN. The corrected rule is: global unsafe if any confirmed
+reference pair is unsafe; global safe only if every pair in the declared scope is validly safe;
+otherwise unknown. A (original mesh) is retained per-pair only. D0106/D0157/D0264 looked like
+"global margin FN" under the old A-only scope; under B they are global unsafe through other real
+pairs (Link3-Link5, Link1-Link6, Link4-Link6), while D0109 is B-global safe. The 42 per-pair A
+margin misses remain a separate A-vs-B difference.
+
+The new proxy was built from the actual flat-USD collision prims rather than from the v2 MuJoCo
+boxes. The first attempt composed the USD rigid-body frame; that produced a 90° arm-box rotation
+and a 263 mm Link3-lidar distance where the actual collider is 48.5 mm. The reason is that the
+instanceable `collisions` scope is authored in the URDF link frame (also the MuJoCo body frame),
+while `/rangercr10lidar/<body>` uses a different but equivalent rigid-body convention. The fix was
+to use the link-local xform chain from the body's `collisions` scope. The chassis also had to stop
+using the old AABB: the actual PhysX shape is the unscaled `ranger_base_link` convex hull (175 hull
+points). Fixed-joint merging maps box_link/cr10_base_link/lidar_link0/d435_link to base_link and
+gripper_base_link/d455_link to cr10_Link6. The proxy keeps 22 relevant colliders; the 8 wheel/
+steering colliders are listed out of scope rather than silently replaced.
+
+The union regression now enforces the old bug's opposite: atomic entries, order-independent
+minimum, adding a far component cannot remove the minimum, and the Link6 main/AG95/D455/fingers
+are all present. Against the actual shapes B, the MuJoCo proxy has zero per-pair and global
+confusion and distance error below 1e-8 m on the fixed, new and targeted rows. Against the
+original mesh A, the fixed set still has 21 tolerance and 42 margin FN; these are simplification
+differences, not proxy implementation errors.
+
+Two reward-semantics decisions are recorded rather than hidden. Link1-vs-chassis/cr10_base is
+excluded as the joint1 mount (the old collision_parts.STRUCTURAL), even though PhysX leaves
+Link1-cr10_base active because cr10_base is merged into base_link. Non-adjacent arm pairs remain
+active; on the 1800 operating poses B global margin flags 691 poses, all through Link4-Link6 at
+2.56-20.00 mm. This is why a lens that only checks arm-lidar was misleading.
+
+Contact timing was checked on the two blocking paths. The measured contact offsets are per
+collider, 0.5-8.70 mm, with rest offset 0; they are not a uniform 20 mm. Actual first contact was
+step 75/105, proxy contact-tolerance step 75/104, and the pair identity matched. PhysX can
+generate contact points before geometric zero, so the offset was left untouched; the timing
+comparison is not used to force numeric agreement. No PPO, `safety.py` replacement or default
+deployment change was made.
+
+## 15. Independent SIMPLECOLL reward integration and frozen-policy rollout
+
+The B distance was wired into the independent task without touching the default safety module.
+`mdp/phys_proxy_reward.py` loads a stable shape export (22 relevant actual colliders) and reuses
+the existing `phys_proxy` union-min GJK query. The independent config replaces only
+`arm_sensor_clearance`; the formula, weight 2.0 and 20 mm margin are the existing quadratic
+margin penalty. The first interface check caught a failure-policy detail: an unknown or
+max-iteration query must not be used as a safe distance, so it is converted to distance 0 and
+counted, never silently passed through. A contact is 0 and the reward is -1; no negative
+penetration is needed. The Link6 group still unions the main box, AG95, D455 and fingers.
+
+The frozen `model_9999` rollout is 64 env, 200 control steps, seed 42, with the actual
+terminations and startup/reset randomisation. Command resampling is frozen for the sequence and
+policy observation corruption is disabled for inference; neither is a training-config rewrite.
+The policy loads with observation 117 matching the actor input and 8 actions; no NaN/Inf and no
+B query failures. The only terminations are 3 `base_contact` events in 12,800 env-steps. The
+control step costs 1.425 s mean because the B query is CPU; this is the expected cost of the
+first runnable version, not a reason to block the short training decision.
+
+Link4-Link6 is the closest active pair in 99.97% of env-steps, but only 79/12,800 (0.62%) are
+below 20 mm, with no contact. Its safety contribution is 79.6% of the safety term, while the
+safety term itself is only 0.46% of negative reward magnitude. That is a real near-distance
+signal, not a false positive, and the first-version 20 mm margin and weight stay. The result is
+"short training can be prepared", with CPU reward throughput as the main operational cost.
+No PPO was run; no default asset, `safety.py`, model, actor, observation or action was changed.
+
+## 16. Budgeted short PPO fine-tune: real updates, no demonstrated benefit
+
+The independent B-reward task was used for a real 50-update PPO fine-tune from model_9999, not
+inference. The checkpoint's agent.yaml was used, so the horizon was the actual 24 steps/update and
+the actor/critic/optimizer/iteration state loaded together; the runner reported 17 optimizer state
+entries and the initial actor/critic weights matched the checkpoint elementwise. The training
+sampling used the actual termination and reset randomisation, not the frozen evaluation command
+sequence. The run completed in 1355 s, with 50 updates, 76,800 env-steps and a complete
+model_10048.pt; actor and critic tensors changed, so gradients occurred.
+
+The training losses fell, but the safety signal did not improve: B safety per env-step went from
+-0.0171 to -0.0223 between the first and last ten updates, and Link4-Link6 stayed near 47% of
+env-steps below 20 mm with no contact. The actual adaptive learning rate was 1e-5 while the
+configured initial rate was 5e-4; the frozen eval also differs from the training command
+distribution, so the short run cannot be read as a safety training success.
+
+The same-protocol before/after evaluation (64 env, 200 steps, seed 42, same commands/reset/
+inference) is the decision evidence: the candidate was slightly worse on EE position
+(+2.17 mm mean), orientation (+0.00073 rad), safety (-0.265), Link4-Link6 <20mm (+2 env-steps)
+and actual non-wheel PhysX contact (2/5 -> 4/9 env-steps/body-events). These counts are small and
+the rollout is short, so the correct wording is "training chain passed, benefit not established";
+the candidate is retained as an experiment, and the recommendation is to stop and keep
+model_9999 rather than replace deployment. A future run should change one variable (the actual
+adaptive LR or the safety-term weight) as a separate short comparison; this round did not
+auto-extend or tune.

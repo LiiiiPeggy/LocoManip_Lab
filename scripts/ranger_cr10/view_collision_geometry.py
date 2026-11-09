@@ -52,6 +52,7 @@ SCENES = {
     "default": ROOT / "mujoco/robots/ranger_cr10/scene.xml",
     "simple": ROOT / "mujoco/robots/ranger_cr10/scene_simple.xml",
     "simple_v2": ROOT / "mujoco/robots/ranger_cr10/scene_simple_v2.xml",
+    "simple_v2_proxy": ROOT / "mujoco/robots/ranger_cr10/scene_simple_v2_proxy.xml",
 }
 SAFETY = ROOT / "source/LeggedManip_Lab/LeggedManip_Lab/tasks/manager_based/leggedmanip_lab/mdp/safety.py"
 
@@ -142,6 +143,8 @@ def color_v2_collisions(model) -> None:
             model.geom_rgba[index] = orange
         elif name == "box_link_col_top":
             model.geom_rgba[index] = yellow
+        elif "col_patch" in name:
+            model.geom_rgba[index] = np.array([1.0, 0.0, 1.0, 0.55], dtype=np.float32)
         elif model.geom_group[index] == 3:
             model.geom_rgba[index] = gray
 
@@ -150,10 +153,10 @@ def main() -> None:
     scene_path = SCENES[args.scene]
     print(f"scene: {args.scene} ({scene_path.relative_to(ROOT)})")
     model = mujoco.MjModel.from_xml_path(str(scene_path))
-    if args.scene == "simple_v2":
+    if args.scene in ("simple_v2", "simple_v2_proxy"):
         color_v2_collisions(model)
         print("colors: green = arm/gripper, orange = box_link left, yellow = box_link top, "
-              "gray = chassis/wheels/lidar")
+              "magenta = proxy patch, gray = chassis/wheels/lidar")
     data = mujoco.MjData(model)
     mujoco.mj_resetDataKeyframe(model, data, model.key("home").id)
     if args.pose_file:

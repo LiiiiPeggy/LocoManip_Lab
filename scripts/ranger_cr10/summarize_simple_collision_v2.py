@@ -232,9 +232,17 @@ summary = {
                           "plate collider was removed per user (visual only), so plate blocking is N/A",
         "open_space_above_box": "pass: Link2 crosses the v1 upper slab with v2 clearance 18.7 mm and no contact",
         "box_link_follow": "pass: both colliders merged into base_link; world centres follow the 0.342 m base motion",
-        "distance_proxy": "not acceptable as a reward proxy: row-specific tolerance FN 31/81, margin FN 60/190; "
-                          "global tolerance FN 0 and margin FN 4; all 20 Link3 misses are in the "
-                          "distal joint4 retreat; 11 Link6 misses",
+        "distance_proxy": "not acceptable as a reward proxy: corrected union aggregation gives "
+                          "row-pair tolerance FN 20/81, margin FN 42/190; global tolerance FN 0 and "
+                          "margin FN 4; all 20 tolerance misses are Link3's distal joint4 retreat; "
+                          "the earlier 11 Link6 misses were the d455-overwrites-main-box bug",
+        "sixty_four_env": "pass: 64 env hold/reset/partial-reset/motion/base/blocking; every env has "
+                          "self-collision true and 23 body-filtered prims; 379.0 env steps/s, 0.1689 s "
+                          "control step (1 env 0.1641 s, +2.9%); no non-finite or abnormal contacts",
+        "proxy_patch": "Link3 wide patch removes all 20 fixed/15 new row tolerance FN but adds 15 fixed/3 "
+                       "new tolerance FP and 17 fixed margin FP (9 of the margin FP are certified culled "
+                       ">=30 mm); tight patch reduces FP but still has 6 culled/3 20-30 mm margin FP and "
+                       "leaves 1/3 FN; Link6 patch has no FN benefit; not integrated",
         "small_scale_parallel": "a small-scale self-collision-only parallel validation can proceed; do not "
                                 "start PPO or replace the reward proxy. The default deployment, safety.py and "
                                 "frozen assets remain untouched.",

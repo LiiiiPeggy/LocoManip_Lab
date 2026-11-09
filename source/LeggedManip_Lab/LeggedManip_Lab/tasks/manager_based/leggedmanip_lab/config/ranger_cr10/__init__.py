@@ -56,8 +56,8 @@ gym.register(
     },
 )
 
-# Independent test candidate: simplified arm boxes + solid box_link collision, self-collisions ON.
-# Do not use as the default deployment; it exists for physical collision validation only.
+# Independent SIMPLECOLL candidate: frozen v2 asset, self-collisions ON, B-distance safety reward.
+# Do not use as the default deployment; it is the independent training/validation candidate.
 gym.register(
     id="RANGER-CR10-TELEOP-SIMPLECOLL",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
