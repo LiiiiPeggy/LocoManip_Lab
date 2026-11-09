@@ -5796,3 +5796,101 @@ P95 +4.92 mm、orientation mean -0.00222 rad；接触和终止完全相同。差
 `lr_restore_comparison.json`、`RESULT_MANIFEST_LR_RESTORE.json`；训练 run
 `logs/rsl_rl/ranger_cr10_teleop/2026-11-09_22-14-55_physproxy_lr_sync_50/`；脚本
 `scripts/ranger_cr10/train_phys_proxy_short.py`、`summarize_lr_restore.py`。
+
+### 43. 原子查询失败修复与 500-update SIMPLECOLL 训练（2026-11-09/10）
+
+任务范围保持 v2 物理碰撞体、B 几何、44 个 active 对子、20 mm margin、weight 2.0、
+adaptive PPO 和已修正的 LR 恢复逻辑；没有增加抓取、夹爪动作、补盒、凸分解、IK 或新奖励。
+
+#### 43.1 原子查询失败不再被吞掉
+
+`scripts/ranger_cr10/phys_proxy.py:reference_group_distance` 现在：
+
+- 记录每个失败原子子对的 `shape_a/shape_b/status` 和 `atomic_queries`；
+- 任一原子子对确认 contact 时，逻辑对立即返回 contact（已发生的失败仍保留在 `failures`）；
+- 没有 contact 但存在失败子对时，返回 `status=unknown, distance=0`，不会因为其他子对
+  separated 而返回安全分离；`best_separated_distance` 只作诊断；
+- 全部正常 separated 时距离和 status 与原来一致（`failures=[]`）。
+
+奖励层 `phys_proxy_reward.compute_pair_distances` 把 unknown 继续转换为
+`unknown_as_contact, distance=0`，并按 `atomic_failures` 计数；`cached_pair_distances` 的
+failure count 现在统计原子失败数。正常查询的奖励不变。
+
+最小故障注入（`scripts/ranger_cr10/check_phys_proxy_failure.py`，4/4 通过）：
+
+| 注入情形 | 结果 |
+|---|---|
+| separated + failure | unknown / 0 / 1 failure |
+| failure then contact | contact / 0 / 1 recorded failure |
+| all separated | separated / 0.03 / 0 failures |
+| all failed | unknown / 0 / 2 failures |
+
+奖励层注入检查：目标对 `unknown_as_contact`、tensor distance 0、cached failure count 1。
+原有 `check_phys_proxy_union.py` 仍通过（Link6 11 atoms、union-min、order/far-component）。
+
+#### 43.2 固定夹爪确认
+
+`scripts/ranger_cr10/check_gripper_fixed.py`，1 env、reset + 100 control steps：
+
+- 动作空间 8 维，仍只有底盘 2 维 + CR10 6 个臂关节；夹爪不在动作中；
+- 驱动关节 `gripper_finger1_joint` target 恒为 0，7 个 mimic joint target 恒为 0；
+- reset 时驱动关节实际 0.03262 rad，稳态最大 0.00878 rad，多数时间 <0.001 rad；
+  mimic joint 稳态最大约 0.0021 rad；
+- B 代理使用 USD authored closed pose 的固定手指形状；稳态偏差小，reset 约 1.9° 的
+  瞬态不是持续偏置，不需要改固定代理变换；
+- 没有明显意外夹爪运动，因此没有删除或修改手指碰撞形状。
+
+#### 43.3 可复现基线与训练
+
+- baseline 目录：`outputs/stage413/b/long_ppo/baseline/`，包含 `code_uncommitted.diff`、
+  `git_status.txt`、`agent.yaml`；`baseline_manifest.json` 记录 commit `cb67a5d`、修复
+  commit `6ee7e68`、USD/形状表/checkpoint/config 的 sha256。
+- 用修正后代理重跑 original `model_9999` 主评估：initial digest 相同、200/200 command
+  digest 相同、逐条记录最大差异 0.0，历史基线兼容。
+- 500-update 训练：64 env、horizon 24、seed 20261108、从 `model_9999` 开始、500 个新增
+  updates、wall 15082.79 s（4.19 h）、每 50 个新增 update 保存一次 checkpoint。
+- 新增 update 与 iteration 的关系：`checkpoint_iteration = 9998 + new_updates`。本轮
+  `new_updates=500`，最终 `model_10498.pt`；阶段 checkpoint 为 `model_10098.pt`（+100）、
+  `model_10248.pt`（+250）、`model_10498.pt`（+500）。
+- LR/KL：首次 update 从 5.0625e-5 开始，短暂升到 7.59375e-5，随后被 KL 压到 1e-5；
+  之后每次 update 的 LR 在 1e-5–3.375e-5 间波动，最终 1e-5；per-update KL 均值
+  0.01167–0.02609。没有为提高 LR 而改 adaptive 或 YAML。
+- 稳定性：0 NaN/Inf、0 B 查询失败；3860 completed episodes，time_out 3831、base_contact
+  29（0.75%）、bad_orientation 0；实际非轮 PhysX 接触 27/768,000 env-steps（55 body
+  events）。value loss 仍有孤立尖峰（17/500 >10，max 48.36），没有持续非有限值；按规则
+  单独记录，没有因单次尖峰中止。
+
+#### 43.4 阶段评估（匹配训练命令分布）
+
+64 env、200 control steps、eval seed 42、确定性 mean、corruption off；三阶段 command
+digest 均 200/200 与 baseline 相同。
+
+| 指标 | original | +100 | +250 | +500 |
+|---|---:|---:|---:|---:|
+| Link4-Link6 <20 mm | 43.64% | 43.76% | 43.21% | **42.95%** |
+| Link4-Link6 contact | 0 | 0 | 0 | 0 |
+| safety reward/env-step | -0.017691 | -0.018120 | **-0.018733** | -0.018336 |
+| EE position mean / P95 | 44.33 / 161.09 mm | 45.97 / 154.91 mm | 48.78 / 164.54 mm | **49.79 / 152.35 mm** |
+| EE orientation mean / P95 | 0.06772 / 0.20134 rad | 0.07303 / 0.20525 | 0.08301 / 0.21385 | **0.08086 / 0.20542** |
+| actual non-wheel contact | 1 / 2 | 2 / 4 | 1 / 2 | 1 / 2 |
+| dones / termination | 65; 63/2/0 | 65; 63/2/0 | 65; 63/2/0 | 65; 63/2/0 |
+| NaN / B failure | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 |
+
+从 baseline 到 +500，Link4-Link6 报警率下降 0.70 pp，但 safety 每 env-step 更负 0.000645，
+EE position mean 增加 5.46 mm、orientation mean 增加 0.01315 rad；position P95 反而改善
+8.74 mm。**这是混合取舍，不是跟踪或安全的单向改善。** 训练 return/step 从 0.9189 升到
+0.9323，但同协议评估没有复现收益，不能拿训练 return 代替跟踪/安全判断。
+
+#### 43.5 停止决定
+
+- 不继续到 1000 updates：没有 checkpoint 同时改善跟踪与安全；+500 的报警率下降伴随
+  safety 惩罚和跟踪均值变差。
+- 未做两种子 holdout：没有“值得保留”的候选，按任务条件不展开两 seed 选模测试。
+- 不自动改安全权重、margin、命令范围、网络或 adaptive；不部署新候选。
+- 最终保留 `model_9999` 为默认策略；500-update run 和阶段 checkpoint 仅作实验记录。
+  判断：**工程修复成立；训练稳定完成；策略收益未成立，存在明确取舍。**
+
+产物：`outputs/stage413/b/long_ppo/FINAL_REPORT_LONG_PPO.json`、
+`long_ppo_summary.json`、`baseline_manifest.json`、`eval_100/250/500.json`、
+`gripper_fixed_check.json`、`phys_proxy_failure_regression.json`；训练 run
+`logs/rsl_rl/ranger_cr10_teleop/2026-11-09_23-55-08_physproxy_long_500/`；计划 §43。

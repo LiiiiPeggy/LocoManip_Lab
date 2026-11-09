@@ -670,3 +670,21 @@ gripper base and the lidar are **not closed**, so their containment is unknown r
   mark it missing and do not reconstruct it from the final LR. Large value-loss spikes in the
   new run (4/50 >10, max 39.1) occurred without NaN/Inf or query failures but show that the
   changed first update changed the optimization trajectory; do not call this a policy gain.
+- **Atomic proxy failures must propagate as unknown, not be hidden by another separated subpair
+  (2026-11-10).** `reference_group_distance` records failed atomic shape IDs; a confirmed
+  contact wins immediately, but with no contact and any failed subquery the logical result is
+  `unknown`/distance 0, and `phys_proxy_reward` counts the atomic failures while keeping the
+  conservative fallback. All-normal distances are unchanged (baseline per-record difference
+  0.0). Fault injection covers separated+failure, failure+contact, all-separated, all-failed.
+- **The AG95 is a fixed observation device, not a policy action (2026-11-10).** The action
+  space remains 2 base + 6 arm channels. The driven gripper target and all seven mimic targets
+  stay 0; reset transient is ~0.0326 rad and steady maximum ~0.0088 rad on the driven joint.
+  The B proxy's fixed closed-gripper shapes are consistent with this; do not add gripper
+  actions or delete finger collision shapes to hide a difference.
+- **The 500-update SIMPLECOLL run did not establish a policy benefit (2026-11-10).** From
+  `model_9999`, 500 new updates completed in 15,082.8 s; checkpoint iteration is
+  `9998 + new_updates` (`model_10498` at +500). Matched-protocol eval: Link4-Link6 <20 mm
+  43.64% -> 42.95%, but safety/env-step -0.017691 -> -0.018336, EE position mean 44.33 ->
+  49.79 mm and orientation mean 0.06772 -> 0.08086 rad. Position P95 improved; the result is a
+  mixed tradeoff, not a tracking/safety gain. Training return rose but is not a substitute.
+  Stop at 500; no two-seed holdout because no candidate qualified; keep `model_9999`.

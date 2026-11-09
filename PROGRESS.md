@@ -998,6 +998,28 @@ Artifacts (each verified by loading/playing it back, not by exit code):
    otherwise stop this PPO direction. Evidence: `outputs/stage413/b/lr_restore/`,
    plan §42.
 
+   **Atomic proxy failure propagation and 500-update SIMPLECOLL result (2026-11-10).**
+   `reference_group_distance` now records atomic failures and returns `unknown` when any
+   subquery fails unless another subpair confirms contact; the reward layer keeps its
+   conservative distance-0 fallback and counts atomic failures. Four fault-injection cases
+   pass; the reward-layer propagation check passes; the Link6 union regression still passes.
+   Normal-query distances and the original baseline are unchanged (initial digest and 200/200
+   command digests equal; max per-record difference 0.0). The fixed gripper check shows no
+   gripper action, target 0 for the driven and seven mimic joints, reset transient 0.0326 rad,
+   steady maximum 0.00878 rad, so the fixed AG95 proxy needs no calibration. A 500-update run
+   from `model_9999` (64 env, horizon 24, seed 20261108) completed in 15,082.79 s (4.19 h),
+   final `model_10498.pt`; checkpoint iteration = 9998 + new updates; checkpoints every 50
+   updates including `model_10098` (+100), `model_10248` (+250), `model_10498` (+500). No
+   NaN/Inf or B query failures; 3,860 episodes, base_contact 29 (0.75%), 27 actual non-wheel
+   contact env-steps; 17 value-loss spikes >10 (max 48.36) were isolated. Matched-protocol
+   evaluation: Link4-Link6 <20 mm 43.64% -> 43.76% -> 43.21% -> 42.95%, but safety/env-step
+   -0.017691 -> -0.018120 -> -0.018733 -> -0.018336, EE position mean 44.33 -> 45.97 -> 48.78
+   -> 49.79 mm, orientation mean 0.06772 -> 0.07303 -> 0.08301 -> 0.08086 rad. Tracking mean
+   and safety worsened while the alarm count fell; position P95 improved, so this is a mixed
+   tradeoff, not a gain. **Training chain and engineering fix passed; policy benefit not
+   established.** Stop at 500, do not run 1000, do not run the two-seed holdout (no candidate
+   qualified), keep `model_9999`. Evidence: `outputs/stage413/b/long_ppo/`, plan §43.
+
 ## Known minor documentation drift (verify before editing docs)
 
 Recorded because it misleads edits; neither item changes runtime behavior.
