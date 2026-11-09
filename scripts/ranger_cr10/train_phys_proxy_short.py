@@ -47,6 +47,7 @@ ap.add_argument(
     default="logs/rsl_rl/ranger_cr10_teleop/2026-11-04_06-57-27_stage410f_ppo/model_9999.pt",
 )
 ap.add_argument("--run_name", default="physproxy_short_ppo")
+ap.add_argument("--save_every_updates", type=int, default=50)
 ap.add_argument(
     "--baseline_run",
     default="logs/rsl_rl/ranger_cr10_teleop/2026-11-08_00-11-40_physproxy_short_ppo_50",
@@ -224,6 +225,16 @@ class Monitor:
         return item
 
 
+def _model_state_dict_equal(live: dict, saved: dict) -> tuple[bool, list[str]]:
+    mismatched = []
+    if set(live.keys()) != set(saved.keys()):
+        return False, ["<key set>"]
+    for key in live:
+        if not torch.equal(live[key].detach().cpu(), saved[key].detach().cpu()):
+            mismatched.append(key)
+    return not mismatched, mismatched
+
+
 def _optimizer_state_dict_equal(left: dict, right: dict) -> bool:
     if set(left.keys()) != set(right.keys()):
         return False
@@ -288,11 +299,11 @@ def sync_scheduler_learning_rate(runner, checkpoint_data: dict) -> dict:
     alg.learning_rate = restored_lr
     optimizer_after = alg.optimizer.state_dict()
     optimizer_unchanged = _optimizer_state_dict_equal(optimizer_before, optimizer_after)
-    actor_unchanged = torch.equal(
-        alg.actor.mlp[0].weight.detach().cpu(), checkpoint_data["actor_state_dict"]["mlp.0.weight"]
+    actor_unchanged, actor_mismatches = _model_state_dict_equal(
+        alg.actor.state_dict(), checkpoint_data["actor_state_dict"]
     )
-    critic_unchanged = torch.equal(
-        alg.critic.mlp[0].weight.detach().cpu(), checkpoint_data["critic_state_dict"]["mlp.0.weight"]
+    critic_unchanged, critic_mismatches = _model_state_dict_equal(
+        alg.critic.state_dict(), checkpoint_data["critic_state_dict"]
     )
     groups_synced = all(abs(float(group["lr"]) - restored_lr) <= 1e-15 for group in live_groups)
     precondition = (
@@ -313,6 +324,8 @@ def sync_scheduler_learning_rate(runner, checkpoint_data: dict) -> dict:
         "optimizer_state_unchanged_by_sync": bool(optimizer_unchanged),
         "actor_state_unchanged_by_sync": bool(actor_unchanged),
         "critic_state_unchanged_by_sync": bool(critic_unchanged),
+        "actor_state_mismatched_keys": actor_mismatches,
+        "critic_state_mismatched_keys": critic_mismatches,
         "first_update_precondition_ok": bool(precondition),
     }
     if not precondition:
@@ -476,7 +489,9 @@ def main() -> None:
     train_cfg["device"] = "cuda:0"
     train_cfg["seed"] = args.seed
     train_cfg["run_name"] = args.run_name
-    train_cfg["save_interval"] = 10
+    # The runner's own save cadence is aligned to the absolute iteration (9999 + n), so it
+    # would not land on 50-new-update boundaries. Save from the monitor instead.
+    train_cfg["save_interval"] = 10**9
     train_cfg["max_iterations"] = args.max_iterations
     # Keep the exact agent config next to the candidate checkpoint so the evaluation script can
     # load the same architecture/hyperparameters without guessing.
@@ -498,11 +513,11 @@ def main() -> None:
 
     checkpoint_data = torch.load(CHECKPOINT, map_location="cpu", weights_only=False)
     lr_sync_report = sync_scheduler_learning_rate(runner, checkpoint_data)
-    loaded_actor = torch.equal(
-        runner.alg.actor.mlp[0].weight.detach().cpu(), checkpoint_data["actor_state_dict"]["mlp.0.weight"]
+    loaded_actor, actor_mismatches = _model_state_dict_equal(
+        runner.alg.actor.state_dict(), checkpoint_data["actor_state_dict"]
     )
-    loaded_critic = torch.equal(
-        runner.alg.critic.mlp[0].weight.detach().cpu(), checkpoint_data["critic_state_dict"]["mlp.0.weight"]
+    loaded_critic, critic_mismatches = _model_state_dict_equal(
+        runner.alg.critic.state_dict(), checkpoint_data["critic_state_dict"]
     )
     optimizer_states = len(runner.alg.optimizer.state_dict()["state"])
     load_report = {
@@ -511,6 +526,12 @@ def main() -> None:
         "runner_iter_after_load": int(runner.current_learning_iteration),
         "actor_state_loaded": bool(loaded_actor),
         "critic_state_loaded": bool(loaded_critic),
+        "actor_state_dict_equal": bool(loaded_actor),
+        "critic_state_dict_equal": bool(loaded_critic),
+        "actor_keys_compared": len(checkpoint_data["actor_state_dict"]),
+        "critic_keys_compared": len(checkpoint_data["critic_state_dict"]),
+        "actor_mismatched_keys": actor_mismatches,
+        "critic_mismatched_keys": critic_mismatches,
         "optimizer_state_entries_loaded": optimizer_states,
         "load_cfg": "default (actor/critic/optimizer/iteration all loaded)",
         "lr_restore_sync": lr_sync_report,
@@ -533,12 +554,17 @@ def main() -> None:
     original_log = runner.logger.log
     metrics_file = open(METRICS_PATH, "w")
     budget_exceeded = False
+    saved_checkpoints: list[str] = []
     def monitored_log(*log_args, **log_kwargs):
         nonlocal budget_exceeded
         original_log(*log_args, **log_kwargs)
         item = monitor.consume(log_kwargs)
         metrics_file.write(json.dumps(item) + "\n")
         metrics_file.flush()
+        if monitor.updates % args.save_every_updates == 0:
+            save_path = os.path.join(LOG_DIR, f"model_{runner.current_learning_iteration}.pt")
+            runner.save(save_path)
+            saved_checkpoints.append(save_path)
         if item["b_query_failures"]:
             monitor.consecutive_failures += 1
         else:
@@ -608,11 +634,17 @@ def main() -> None:
         if name.startswith("model_") and name.endswith(".pt")
     ]
     final_checkpoint = max(candidates, key=os.path.getmtime) if candidates else None
+    if final_checkpoint is not None and final_checkpoint not in saved_checkpoints:
+        saved_checkpoints.append(final_checkpoint)
     summary = {
         "stop_reason": stop_reason,
         "budget_exceeded": budget_exceeded,
         "final_checkpoint": final_checkpoint,
+        "checkpoint_source_iteration": int(checkpoint_data["iter"]),
         "final_iteration": int(runner.current_learning_iteration),
+        "new_updates_completed": int(monitor.updates),
+        "new_updates_formula": "final_iteration - checkpoint_source_iteration + 1",
+        "saved_checkpoints": saved_checkpoints,
         "load_report": load_report,
         "lr_restore_sync": lr_sync_report,
         "config_diff": config_diff,

@@ -327,14 +327,23 @@ def world_points(shape: Shape, data) -> np.ndarray:
 
 def reference_group_distance(shapes: dict[str, list[Shape]], first: str, second: str, data,
                              tol: float = 1e-8) -> dict:
-    """Exact GJK union-min for a logical pair, with the winning atomic pair kept."""
+    """Exact GJK union-min for a logical pair, with the winning atomic pair kept.
+
+    An atomic query failure is never hidden by a different subpair that happened to separate.
+    A confirmed contact wins immediately. If there is no confirmed contact but any atomic
+    query failed, the logical pair is ``unknown`` and the reward layer applies its existing
+    conservative contact fallback; the failed shape IDs are returned for counting.
+    """
     from convex_distance import gjk_distance
 
     best = {"distance": float("inf"), "status": "unknown", "shape_a": None, "shape_b": None}
+    failures: list[dict] = []
+    atomic_queries = 0
     for shape_a in shapes.get(first, []):
         points_a = world_points(shape_a, data)
         for shape_b in shapes.get(second, []):
             points_b = world_points(shape_b, data)
+            atomic_queries += 1
             result = gjk_distance(points_a, points_b, tol=tol)
             if result.status == "intersecting":
                 distance = 0.0
@@ -343,17 +352,43 @@ def reference_group_distance(shapes: dict[str, list[Shape]], first: str, second:
                 distance = float(result.distance)
                 status = "separated"
             else:
-                distance = float("nan")
-                status = result.status
+                failures.append({
+                    "shape_a": shape_a.name,
+                    "shape_b": shape_b.name,
+                    "status": result.status,
+                })
+                continue
             if status == "contact":
-                return {"distance": 0.0, "status": "contact", "shape_a": shape_a.name,
-                        "shape_b": shape_b.name}
+                return {
+                    "distance": 0.0, "status": "contact", "shape_a": shape_a.name,
+                    "shape_b": shape_b.name, "atomic_queries": atomic_queries,
+                    "failures": failures,
+                }
             if np.isfinite(distance) and distance < best["distance"]:
                 best = {"distance": distance, "status": status, "shape_a": shape_a.name,
                         "shape_b": shape_b.name}
-    if not np.isfinite(best["distance"]):
-        best["status"] = "unknown"
-    return best
+    if not shapes.get(first) or not shapes.get(second):
+        failures.append({"shape_a": None, "shape_b": None, "status": "empty_group"})
+    if failures:
+        # A separated subpair cannot make an unresolved logical pair safe. Keep the best
+        # separated distance only as a diagnostic; the reward layer sees unknown and uses 0.
+        return {
+            "distance": 0.0,
+            "status": "unknown",
+            "shape_a": best["shape_a"],
+            "shape_b": best["shape_b"],
+            "best_separated_distance": best["distance"] if np.isfinite(best["distance"]) else None,
+            "atomic_queries": atomic_queries,
+            "failures": failures,
+        }
+    return {
+        "distance": best["distance"],
+        "status": best["status"],
+        "shape_a": best["shape_a"],
+        "shape_b": best["shape_b"],
+        "atomic_queries": atomic_queries,
+        "failures": [],
+    }
 
 
 def proxy_group_distance(model, data, shapes: dict[str, list[Shape]], first: str, second: str,

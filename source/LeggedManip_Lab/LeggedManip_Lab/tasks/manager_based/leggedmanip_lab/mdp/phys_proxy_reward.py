@@ -119,6 +119,8 @@ def compute_pair_distances(q: np.ndarray, tol: float = 1e-6):
                 "status": status,
                 "shape_a": result.get("shape_a"),
                 "shape_b": result.get("shape_b"),
+                "atomic_queries": result.get("atomic_queries"),
+                "atomic_failures": result.get("failures", []),
             })
         records.append(env_records)
     return values, pairs, records
@@ -134,8 +136,10 @@ def cached_pair_distances(env, asset):
     q = asset.data.joint_pos[:, columns].detach().cpu().numpy()
     values, pairs, records = compute_pair_distances(q)
     failures = sum(
-        1 for env_records in records for record in env_records
-        if record["status"] in ("unknown", "unknown_as_contact", "max_iterations", "degenerate")
+        len(record.get("atomic_failures", []))
+        if "atomic_failures" in record
+        else int(record["status"] in ("unknown", "unknown_as_contact", "max_iterations", "degenerate"))
+        for env_records in records for record in env_records
     )
     tensor = torch.as_tensor(values, dtype=torch.float32, device=asset.data.joint_pos.device)
     env._phys_proxy_cache = {
