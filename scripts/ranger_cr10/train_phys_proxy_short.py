@@ -49,6 +49,19 @@ ap.add_argument(
 ap.add_argument("--run_name", default="physproxy_short_ppo")
 ap.add_argument("--save_every_updates", type=int, default=50)
 ap.add_argument(
+    "--safety_weight",
+    type=float,
+    default=2.0,
+    help="In-memory B safety reward weight for this independent run; default task file stays 2.0.",
+)
+ap.add_argument(
+    "--shadow_safety_weight",
+    type=float,
+    default=2.0,
+    help="Reference weight used only for the non-optimized shadow B metric.",
+)
+ap.add_argument("--step_metrics", action=argparse.BooleanOptionalAction, default=True)
+ap.add_argument(
     "--baseline_run",
     default="logs/rsl_rl/ranger_cr10_teleop/2026-11-08_00-11-40_physproxy_short_ppo_50",
     help="Previous run whose behavior config is compared before training.",
@@ -68,6 +81,9 @@ import LeggedManip_Lab.tasks  # noqa: E402
 from LeggedManip_Lab.tasks.manager_based.leggedmanip_lab.config.ranger_cr10.simple_collision_env_cfg import (  # noqa: E402
     RangerCr10TeleopSimpleCollisionEnvCfg,
 )
+from LeggedManip_Lab.tasks.manager_based.leggedmanip_lab.mdp.phys_proxy_reward import (  # noqa: E402
+    cached_pair_distances,
+)
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 CHECKPOINT = os.path.join(ROOT, args.checkpoint)
@@ -75,6 +91,8 @@ RUN_STAMP = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 LOG_DIR = os.path.join(ROOT, "logs", "rsl_rl", "ranger_cr10_teleop", f"{RUN_STAMP}_{args.run_name}")
 os.makedirs(os.path.join(LOG_DIR, "params"), exist_ok=True)
 METRICS_PATH = os.path.join(LOG_DIR, "train_metrics.jsonl")
+STEP_METRICS_PATH = os.path.join(LOG_DIR, "step_metrics.jsonl")
+PAIR_NAMES_PATH = os.path.join(LOG_DIR, "pair_names.json")
 LR_KL_PATH = os.path.join(LOG_DIR, "lr_kl.jsonl")
 CONFIG_PATH = os.path.join(LOG_DIR, "run_config.json")
 CONFIG_DIFF_PATH = os.path.join(LOG_DIR, "config_diff.json")
@@ -89,7 +107,17 @@ class StopTraining(RuntimeError):
 class Monitor:
     """Per-update metrics without changing the environment or reward."""
 
-    def __init__(self, env, runner, wall_seconds: float, checkpoint_iter: int):
+    def __init__(
+        self,
+        env,
+        runner,
+        wall_seconds: float,
+        checkpoint_iter: int,
+        safety_weight: float,
+        shadow_safety_weight: float,
+        step_metrics_file,
+        pair_names_path: str,
+    ):
         self.env = env
         self.runner = runner
         self.wall_seconds = wall_seconds
@@ -100,8 +128,12 @@ class Monitor:
         self.completed = 0
         self.env_steps = 0
         self.b_failures = 0
+        self.b_query_time = 0.0
         self.safety_sum = 0.0
         self.safety_abs = 0.0
+        self.shadow_safety_sum = 0.0
+        self.shadow_safety_abs = 0.0
+        self.reward_sum = 0.0
         self.link46_below20 = 0
         self.link46_contact = 0
         self.link46_min_count = 0
@@ -116,6 +148,12 @@ class Monitor:
         self.updates = 0
         self.reward_manager = env.reward_manager
         self.safety_idx = self.reward_manager.active_terms.index("arm_sensor_clearance")
+        self.safety_weight = float(safety_weight)
+        self.shadow_safety_weight = float(shadow_safety_weight)
+        self.step_metrics_file = step_metrics_file
+        self.pair_names_path = pair_names_path
+        self.pair_names_written = False
+        self.robot = env.scene["robot"]
         self.ee_cmd = env.command_manager.get_term("ee_pose")
         self.vel_cmd = env.command_manager.get_term("base_velocity")
         self.sensor = env.scene["contact_forces"]
@@ -130,26 +168,42 @@ class Monitor:
         self.completed += int(dones.sum().item())
         for name in self.term_names:
             self.term_counts[name] += int(self.env.termination_manager.get_term(name).sum().item())
+        self.reward_sum += float(reward.sum().item())
+
+        # Zero-weight terms are skipped by RewardManager. Query the same B proxy explicitly for
+        # the shadow metric; when the term is active this is a cache hit at the current step.
+        query_start = time.perf_counter()
         last = getattr(self.env, "_phys_proxy_last", None)
-        if last is not None:
-            self.b_failures += int(last.get("failures", 0))
-            records = last.get("records", [])
-            for env_records in records:
-                link46 = next(
-                    (record for record in env_records if record["pair"] == ["cr10_Link4", "cr10_Link6"]), None
-                )
-                if link46 is None:
-                    continue
-                if link46["distance"] <= 0.02:
-                    self.link46_below20 += 1
-                if link46["distance"] <= 1e-6:
-                    self.link46_contact += 1
-                minimum = min(env_records, key=lambda record: record["distance"])
-                if minimum["pair"] == ["cr10_Link4", "cr10_Link6"]:
-                    self.link46_min_count += 1
+        if last is None or int(last.get("step", -1)) != int(self.env.common_step_counter):
+            tensor, pairs, records, failures = cached_pair_distances(self.env, self.robot)
+        else:
+            tensor, pairs, records, failures = (
+                last["tensor"], last["pairs"], last["records"], last.get("failures", 0)
+            )
+        self.b_query_time += time.perf_counter() - query_start
+        self.b_failures += int(failures)
+        distances = tensor.detach().cpu().numpy()
+        link46_idx = next(
+            index for index, pair in enumerate(pairs)
+            if list(pair) == ["cr10_Link4", "cr10_Link6"]
+        )
+        link46 = distances[:, link46_idx]
+        self.link46_below20 += int((link46 <= 0.02).sum())
+        self.link46_contact += int((link46 <= 1e-6).sum())
+        self.link46_min_count += int((distances.argmin(axis=1) == link46_idx).sum())
+
+        # Shadow safety uses the original formula and a fixed reference weight. It never enters
+        # the PPO reward, return or advantage.
+        clipped = np.minimum(distances, 0.15).min(axis=1)
+        excess = np.maximum(0.02 - clipped, 0.0) / 0.02
+        shadow = self.shadow_safety_weight * (-(excess ** 2)) * self.control_dt
+        self.shadow_safety_sum += float(shadow.sum())
+        self.shadow_safety_abs += float(np.abs(shadow).sum())
+
         safety = self.reward_manager._step_reward[:, self.safety_idx] * self.control_dt
         self.safety_sum += float(safety.sum().item())
         self.safety_abs += float(safety.abs().sum().item())
+
         forces = self.sensor.data.net_forces_w
         if forces is not None and self.non_wheel_rows:
             magnitudes = torch.linalg.norm(forces[:, self.non_wheel_rows], dim=-1)
@@ -165,6 +219,38 @@ class Monitor:
                 self.vel_xy.append(float(self.vel_cmd.metrics["error_vel_xy"].mean().item()))
             if "error_vel_yaw" in self.vel_cmd.metrics:
                 self.vel_yaw.append(float(self.vel_cmd.metrics["error_vel_yaw"].mean().item()))
+
+        if self.step_metrics_file is not None:
+            if not self.pair_names_written:
+                os.makedirs(os.path.dirname(self.pair_names_path), exist_ok=True)
+                with open(self.pair_names_path, "w") as handle:
+                    json.dump([list(pair) for pair in pairs], handle)
+                self.pair_names_written = True
+            failure_by_pair = np.zeros(len(pairs), dtype=np.int64)
+            for env_records in records:
+                for pair_idx, record in enumerate(env_records):
+                    failure_by_pair[pair_idx] += len(record.get("atomic_failures", []))
+            global_min = np.unravel_index(int(np.argmin(distances)), distances.shape)
+            row = {
+                "step": int(self.env.common_step_counter),
+                "reward_sum": float(reward.sum().item()),
+                "b_actual_sum": float(safety.sum().item()),
+                "b_shadow_sum": float(shadow.sum()),
+                "link46_below20": int((link46 <= 0.02).sum()),
+                "link46_contact": int((link46 <= 1e-6).sum()),
+                "link46_distance_mean": float(link46.mean()),
+                "link46_distance_min": float(link46.min()),
+                "global_min_pair": list(pairs[global_min[1]]),
+                "global_min_distance": float(distances[global_min]),
+                "pair_distance_mean": distances.mean(axis=0).tolist(),
+                "pair_distance_min": distances.min(axis=0).tolist(),
+                "pair_below20": (distances <= 0.02).sum(axis=0).tolist(),
+                "pair_contact": (distances <= 1e-6).sum(axis=0).tolist(),
+                "pair_failures": failure_by_pair.tolist(),
+            }
+            self.step_metrics_file.write(json.dumps(row) + "\n")
+            self.step_metrics_file.flush()
+
         if not bool(torch.isfinite(reward).all()):
             self.abort_reason = "non_finite_reward"
             raise StopTraining(self.abort_reason)
@@ -191,8 +277,15 @@ class Monitor:
             "completed_episodes": self.completed,
             "termination_counts": dict(self.term_counts),
             "b_query_failures": self.b_failures,
+            "b_query_time_s": self.b_query_time,
+            "reward_sum": self.reward_sum,
+            "reward_per_env_step": self.reward_sum / max(self.env_steps, 1),
+            "b_weight_actual": self.safety_weight,
+            "b_weight_shadow": self.shadow_safety_weight,
             "b_safety_sum": self.safety_sum,
             "b_safety_abs": self.safety_abs,
+            "b_safety_sum_shadow": self.shadow_safety_sum,
+            "b_safety_abs_shadow": self.shadow_safety_abs,
             "link4_link6_below20_env_steps": self.link46_below20,
             "link4_link6_contact_env_steps": self.link46_contact,
             "link4_link6_min_pair_env_steps": self.link46_min_count,
@@ -211,8 +304,12 @@ class Monitor:
         self.completed = 0
         self.env_steps = 0
         self.b_failures = 0
+        self.b_query_time = 0.0
+        self.reward_sum = 0.0
         self.safety_sum = 0.0
         self.safety_abs = 0.0
+        self.shadow_safety_sum = 0.0
+        self.shadow_safety_abs = 0.0
         self.link46_below20 = 0
         self.link46_contact = 0
         self.link46_min_count = 0
@@ -469,16 +566,24 @@ def compare_behavior_config(new_config: dict) -> dict:
         for key in budget_keys
         if baseline.get(key) != new_config.get(key)
     }
+    weight = new_config.get("safety_weight_actual")
+    intentional = [
+        "scheduler internal LR synchronized to restored optimizer LR before first update",
+        "LR/KL logging added (lr_kl.jsonl, lr_schedule in train_metrics.jsonl)",
+        "new independent output directory",
+    ]
+    if weight is not None and float(weight) != 2.0:
+        intentional.append(
+            f"B safety reward weight changed in memory to {weight} (reference 2.0); "
+            "shadow metric remains reference-weighted"
+        )
     return {
         "baseline_run": BASELINE_RUN,
         "baseline_config_found": True,
         "behavior_diffs": behavior_diffs,
         "budget_diffs": budget_diffs,
-        "intentional_changes": [
-            "scheduler internal LR synchronized to restored optimizer LR before first update",
-            "LR/KL logging added (lr_kl.jsonl, lr_schedule in train_metrics.jsonl)",
-            "new independent output directory",
-        ],
+        "safety_weight_actual": weight,
+        "intentional_changes": intentional,
         "expected_behavior_diffs": [],
     }
 
@@ -502,10 +607,23 @@ def main() -> None:
     env_cfg.seed = args.seed
     env_cfg.scene.num_envs = args.num_envs
     env_cfg.log_dir = LOG_DIR
+    # Independent experiment only: the task file keeps weight 2.0.
+    env_cfg.rewards.arm_sensor_clearance.weight = args.safety_weight
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
     env = gym.make("RANGER-CR10-TELEOP-SIMPLECOLL", cfg=env_cfg)
     u = env.unwrapped
+    if args.safety_weight == 0.0:
+        # RewardManager skips zero-weight terms. Query the B proxy at the same pre-reset point
+        # as the reward computation, so the shadow metric matches the training transition. This
+        # only observes distances; it does not add to the reward or consume RNG.
+        original_reward_compute = u.reward_manager.compute
+
+        def shadow_before_reward(dt, _original=original_reward_compute):
+            cached_pair_distances(u, u.scene["robot"])
+            return _original(dt)
+
+        u.reward_manager.compute = shadow_before_reward
     wrapper = RslRlVecEnvWrapper(env, clip_actions=train_cfg.get("clip_actions"))
     runner = OnPolicyRunner(wrapper, train_cfg, log_dir=LOG_DIR, device=u.device)
     runner.load(CHECKPOINT)
@@ -543,7 +661,17 @@ def main() -> None:
         "max_iterations": args.max_iterations,
         "seed": args.seed,
     }, indent=1), flush=True)
-    monitor = Monitor(u, runner, args.wall_minutes * 60.0, int(checkpoint_data["iter"]))
+    step_metrics_file = open(STEP_METRICS_PATH, "w") if args.step_metrics else None
+    monitor = Monitor(
+        u,
+        runner,
+        args.wall_minutes * 60.0,
+        int(checkpoint_data["iter"]),
+        args.safety_weight,
+        args.shadow_safety_weight,
+        step_metrics_file,
+        PAIR_NAMES_PATH,
+    )
     original_step = u.step
     def monitored_step(action, _orig=original_step):
         output = _orig(action)
@@ -596,6 +724,10 @@ def main() -> None:
         "lr_restore_sync": lr_sync_report,
         "lr_kl_path": LR_KL_PATH,
         "lr_kl_sampling": "actual PPO.update KL; LR before adaptive branch and after optimizer.step",
+        "safety_weight_actual": args.safety_weight,
+        "shadow_safety_weight": args.shadow_safety_weight,
+        "step_metrics_path": STEP_METRICS_PATH,
+        "pair_names_path": PAIR_NAMES_PATH,
         "terminations": list(u.termination_manager.active_terms),
         "events": list(u.event_manager.active_terms),
         "reward_terms": list(u.reward_manager.active_terms),
@@ -628,6 +760,8 @@ def main() -> None:
     finally:
         metrics_file.close()
         lr_kl_file.close()
+        if step_metrics_file is not None:
+            step_metrics_file.close()
 
     candidates = [
         os.path.join(LOG_DIR, name) for name in os.listdir(LOG_DIR)
@@ -652,7 +786,11 @@ def main() -> None:
         "training_time_s": time.time() - monitor.started,
         "num_updates_completed": monitor.updates,
         "metrics_file": METRICS_PATH,
+        "step_metrics_file": STEP_METRICS_PATH,
+        "pair_names_file": PAIR_NAMES_PATH,
         "lr_kl_file": LR_KL_PATH,
+        "safety_weight_actual": args.safety_weight,
+        "shadow_safety_weight": args.shadow_safety_weight,
         "config_file": CONFIG_PATH,
         "config_diff_file": CONFIG_DIFF_PATH,
     }
