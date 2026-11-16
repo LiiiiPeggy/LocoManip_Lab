@@ -688,3 +688,17 @@ gripper base and the lidar are **not closed**, so their containment is unknown r
   49.79 mm and orientation mean 0.06772 -> 0.08086 rad. Position P95 improved; the result is a
   mixed tradeoff, not a tracking/safety gain. Training return rose but is not a substitute.
   Stop at 500; no two-seed holdout because no candidate qualified; keep `model_9999`.
+- **Zero-weight reward terms need an explicit, pre-reset shadow query (2026-11-16).**
+  RewardManager skips a term whose weight is zero, so the B distance is not computed by the
+  reward term. `train_phys_proxy_short.py` calls `cached_pair_distances` immediately before
+  `reward_manager.compute`, records the reference-weighted shadow metric, and never adds it to
+  the PPO reward. The shadow matches the weight=2 actual B on identical first rollouts
+  (-24.143427 vs -24.143426); zero-weight first rollout has the same 647 Link4-Link6 alarms.
+- **B weight=0 does not explain the fine-tuning tracking degradation (2026-11-16).** 500 new
+  updates from model_9999: weight=0 +500 has better tracking than weight=2 (EE mean/P95
+  46.47/136.24 mm vs 49.79/152.35 mm) but worse safety (Link4-Link6 46.48% vs 42.95%,
+  safety/env-step -0.021341 vs -0.018336). Both groups have worse tracking mean/orientation
+  than original (44.33 mm/0.06772 rad), so B is not the sole cause. Weight=0 training also
+  had more base_contact (1.93% vs 0.75%) and value-loss spikes. Keep model_9999. Stage command
+  digests for weight=0 are only 2/200 because an early baseline/weight2 base_contact shifted
+  command RNG; fix evaluation-side termination/command replay before another reward ablation.

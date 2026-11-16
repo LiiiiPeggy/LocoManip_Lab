@@ -1020,6 +1020,28 @@ Artifacts (each verified by loading/playing it back, not by exit code):
    established.** Stop at 500, do not run 1000, do not run the two-seed holdout (no candidate
    qualified), keep `model_9999`. Evidence: `outputs/stage413/b/long_ppo/`, plan §43.
 
+   **B safety weight=0 single-variable ablation (2026-11-16).** RewardManager skips zero-weight
+   terms, so the training script queries the B proxy before reset in `reward_manager.compute`,
+   records a reference-weighted shadow metric (same formula/margin/weight=2) outside PPO, and
+   writes per-step actual reward, actual B contribution 0, shadow B, all 44 pair distances,
+   alarms, contacts and atomic failures. Interface check: first rollout Link4-Link6 <20 mm 647,
+   same as weight=2; shadow B -24.143427 vs weight=2 actual -24.143426; 0 B failures. The 500
+   new updates from `model_9999` completed in 17,848.1 s (4.96 h), final `model_10498.pt`,
+   checkpoints every 50; 3,893 episodes, time_out 3818, base_contact 75 (1.93%), actual
+   non-wheel contact 50/768,000 env-steps, 0 NaN/Inf/B failures. Training shadow B/env-step
+   first10/last10 -0.02124 -> -0.01906 (weight=2 actual -0.02118 -> -0.01782); Link4-Link6
+   46.7% -> 45.9% (weight=2 46.7% -> 45.1%); value-loss spikes 45/500 >10 (max 85.08).
+   Matched evaluation at +100/+250/+500: original Link4-Link6 43.64%, safety -0.017691, EE pos
+   44.33/161.09 mm, orientation 0.06772/0.20134; weight=2 +500 42.95%, -0.018336,
+   49.79/152.35 mm, 0.08086/0.20542; weight=0 +500 46.48%, -0.021341, 46.47/136.24 mm,
+   0.07615/0.21449. weight=0 tracking is better than weight=2 but safety is worse; both
+   fine-tuned groups have worse tracking mean/orientation than original, so B is not the sole
+   cause of tracking degradation. **No candidate; keep model_9999.** Protocol caveat: weight=0
+   stage command digest is only 2/200 because baseline/weight2 had a base_contact at step 2 and
+   weight=0 did not, shifting command RNG; initial state is equal but later commands are not
+   strictly paired. Next step should fix evaluation-side termination/command replay before
+   another reward ablation. Evidence: `outputs/stage413/b/weight0/`, plan §44.
+
 ## Known minor documentation drift (verify before editing docs)
 
 Recorded because it misleads edits; neither item changes runtime behavior.

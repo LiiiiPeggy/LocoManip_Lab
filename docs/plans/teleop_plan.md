@@ -5894,3 +5894,100 @@ EE position mean 增加 5.46 mm、orientation mean 增加 0.01315 rad；position
 `long_ppo_summary.json`、`baseline_manifest.json`、`eval_100/250/500.json`、
 `gripper_fixed_check.json`、`phys_proxy_failure_regression.json`；训练 run
 `logs/rsl_rl/ranger_cr10_teleop/2026-11-09_23-55-08_physproxy_long_500/`；计划 §43。
+
+### 44. B 安全奖励 weight=0 单变量消融（2026-11-16）
+
+目的：区分 500-update 的跟踪变化来自继续微调，还是来自 B 安全惩罚。只把训练时的
+`arm_sensor_clearance` 权重从 2.0 改为 0.0；物理自碰撞、44 对子、margin 20 mm、Actor/
+Observation/动作空间、命令分布、随机化、终止、PPO 参数、LR 恢复与 adaptive 均不变。
+没有修改默认 SIMPLECOLL 配置或 `safety.py`。
+
+#### 44.1 零权重监控
+
+RewardManager 对 weight=0 的项直接跳过，不调用 reward func。训练脚本因此在
+`reward_manager.compute(dt)` 前显式调用 `cached_pair_distances`：查询点与正常奖励相同
+（reset 之前），不使用旧缓存；影子奖励用相同公式、相同 20 mm margin、参考 weight=2，只
+记录，不进入 PPO reward/return/advantage。每步写 `step_metrics.jsonl`：
+
+- 实际 PPO reward、B 项实际贡献（0）、影子 B；
+- Link4-Link6 及全部 44 对的 mean/min、<20 mm、contact、atomic failure；
+- 全局最近对子、查询失败；每 update 写 `train_metrics.jsonl` 的 actual/shadow 汇总。
+
+接口检查（1 update）：
+
+| 检查 | 结果 |
+|---|---|
+| 首次 rollout Link4-Link6 <20 mm | 647，与 weight=2 首次 rollout 相同 |
+| 实际 B reward | 0 |
+| 影子 B | -24.143427，与 weight=2 实际 B -24.143426 一致 |
+| B 查询失败 | 0 |
+| 每步记录 | 24 行，影子求和与 update 汇总一致 |
+
+#### 44.2 训练
+
+命令：
+
+```bash
+timeout 43200 python scripts/ranger_cr10/train_phys_proxy_short.py \
+  --num_envs 64 --max_iterations 500 --seed 20261108 \
+  --wall_minutes 720 --run_name physproxy_weight0_500 \
+  --save_every_updates 50 --safety_weight 0.0 --shadow_safety_weight 2.0
+```
+
+- run：`logs/rsl_rl/ranger_cr10_teleop/2026-11-16_18-41-15_physproxy_weight0_500/`
+- 500 个新增 updates，最终 `model_10498.pt`
+- wall 17,848.1 s（4.96 h；共享 GPU 被其他进程占用，rollout 比 weight=2 run 慢）
+- 每 50 个新增 update 保存；`checkpoint_iteration = 9998 + new_updates`
+- 3,893 completed episodes；time_out 3818、base_contact 75（1.93%）、bad 0
+- 实际非轮 PhysX 接触 50/768,000 env-steps（104 body events）
+- 0 NaN/Inf、0 B 查询失败
+- value loss 尖峰 45/500 >10，max 85.08；比 weight=2 run（17，max 48.36）更噪，但无持续非有限值
+- LR：首 update 5.0625e-5 → 7.59375e-5 → 1e-5；后续 1e-5–3.375e-5；
+  per-update KL 均值 0.01184–0.03401；首 update KL 均值 0.01732、单样本 max 0.60758
+- 训练影子 B/env-step first10/last10：-0.02124 → -0.01906；weight=2 实际 B：-0.02118 → -0.01782
+- 训练 Link4-Link6 <20 mm first10/last10：46.7% → 45.9%；weight=2：46.7% → 45.1%
+
+#### 44.3 三组阶段评估（统一 weight=2 评估环境）
+
+64 env、200 steps、seed 42、确定性 mean、corruption off。所有 initial digest 相同。
+weight=2 阶段 command digest 200/200；weight=0 阶段只有 2/200：baseline/weight2 在 step 2
+发生一次 base_contact/实际 PhysX 接触，weight=0 没有，因此 reset 消费了不同的 command
+RNG 流。**后续命令不严格配对，阶段 aggregate 差异不能全部归因于策略；这是本轮的主要
+协议限制。**
+
+| 阶段 / 策略 | Link4-Link6 <20 mm | safety/env-step | EE pos mean / P95 | EE ori mean / P95 | actual contact | dones (timeout/base) |
+|---|---:|---:|---:|---:|---:|---:|
+| original | 43.64% | -0.017691 | 44.33 / 161.09 mm | 0.06772 / 0.20134 | 1 / 2 | 65 (63/2) |
+| +100 w2 | 43.76% | -0.018120 | 45.97 / 154.91 | 0.07303 / 0.20525 | 2 / 4 | 65 (63/2) |
+| +100 w0 | **49.66%** | **-0.022761** | 44.80 / 142.22 | 0.07329 / 0.20885 | 1 / 4 | 65 (64/1) |
+| +250 w2 | 43.21% | -0.018733 | 48.78 / 164.54 | 0.08301 / 0.21385 | 1 / 2 | 65 (63/2) |
+| +250 w0 | 46.91% | -0.021355 | 45.86 / 137.36 | 0.07954 / 0.22173 | 0 / 0 | 64 (64/0) |
+| +500 w2 | **42.95%** | -0.018336 | 49.79 / 152.35 | 0.08086 / 0.20542 | 1 / 2 | 65 (63/2) |
+| +500 w0 | 46.48% | -0.021341 | 46.47 / 136.24 | 0.07615 / 0.21449 | 0 / 0 | 64 (64/0) |
+
+其他主要对子：`Link3-Link5` 在 w0 为 413/315/315 次 <20 mm、0 contact；`Link6-lidar`
+在 +100 w0 有 1 次 contact；`Link6-chassis` 在 w2 +250/+500 有 1 次 contact。接触计数很小，
+不作为安全改善证据。所有阶段 0 NaN/Inf、0 B 查询失败；step time 约 1.04–1.31 s。
+
+#### 44.4 判断
+
+- **两组 500-update 的跟踪 mean/orientation 都比 original 差**：weight2 49.79 mm /
+  0.08086 rad，weight0 46.47 mm / 0.07615 rad，original 44.33 mm / 0.06772 rad。去掉 B
+  没有恢复原始跟踪，因此 **B 不是跟踪退化的唯一原因**；继续微调/其他奖励目标也参与。
+- **weight0 相对 weight2 是安全/跟踪权衡**：跟踪 mean/P95 更好（46.47/136.24 vs
+  49.79/152.35 mm），orientation 略好（0.07615 vs 0.08086 rad），但 Link4-Link6 <20 mm
+  更高（46.48% vs 42.95%），safety/env-step 更差（-0.021341 vs -0.018336）。
+- **weight0 相对 original** 仍是混合结果：position mean 和 orientation 更差，safety 更差；
+  只有 position P95 和部分接触计数更小。
+- 训练侧 weight0 的 base_contact 1.93% vs weight2 0.75%，value loss 尖峰更多，影子 B
+  最后 10 次更差（-0.01906 vs -0.01782），与评估方向一致。
+- weight0 实际 PPO reward 不含 B，不能与 weight2 的实际 reward 直接比较；三组评估统一
+  weight=2，safety 数值可比。
+
+**结论：没有部署候选；默认继续 `model_9999`。** B 权重不是跟踪退化的唯一解释，且 weight0
+在安全上更差。不要继续扫 B 权重；下一步先修正评估侧的终止后 command replay/RNG 分叉，
+再做一次同样的阶段配对，然后才考虑其他奖励或微调过程。不自动启动第二种参数实验。
+
+产物：`outputs/stage413/b/weight0/FINAL_REPORT_WEIGHT_ABLATION.json`、
+`weight_ablation_summary.json`、`eval_100/250/500.json`、训练 run
+`logs/rsl_rl/ranger_cr10_teleop/2026-11-16_18-41-15_physproxy_weight0_500/`；计划 §44。
