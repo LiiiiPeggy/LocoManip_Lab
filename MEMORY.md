@@ -702,3 +702,18 @@ gripper base and the lidar are **not closed**, so their containment is unknown r
   had more base_contact (1.93% vs 0.75%) and value-loss spikes. Keep model_9999. Stage command
   digests for weight=0 are only 2/200 because an early baseline/weight2 base_contact shifted
   command RNG; fix evaluation-side termination/command replay before another reward ablation.
+- **Evaluation commands must be a pre-generated policy-independent plan (2026-11-17).**
+  Use `scripts/ranger_cr10/rollout_phys_proxy_fixed_commands.py`: commands depend on
+  `(eval seed, env id, global step)`, reset does not resample, and per-env reset randomisation
+  uses `eval_seed*1000003 + env_id*7919 + reset_count*104729` with RNG save/restore. Reward,
+  B distance, tracking error and PhysX contact are captured before reset. The prior cross-policy
+  weight0 comparison was not strictly paired because an early base_contact shifted command RNG;
+  its causal interpretation is limited.
+- **Fixed-command evaluation leaves tracking degradation but not a robust safety difference
+  (2026-11-17).** Six rollouts (three policies x seeds 42/43) have identical initial digests,
+  command-plan hashes and 200/200 step command digests within each seed. Both +500 policies still
+  have worse EE position mean/orientation mean than original (aggregate 36.40 mm/0.06449 rad vs
+  weight2 41.96/0.07687 vs weight0 42.45/0.07292), while safety and Link4-Link6 differences are
+  small and direction-inconsistent across seeds. The old weight0 safety/tracking tradeoff does
+  not survive. Keep model_9999; next non-B hypothesis is `arm_deviation`, not another B-weight
+  sweep.

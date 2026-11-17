@@ -1042,6 +1042,26 @@ Artifacts (each verified by loading/playing it back, not by exit code):
    strictly paired. Next step should fix evaluation-side termination/command replay before
    another reward ablation. Evidence: `outputs/stage413/b/weight0/`, plan §44.
 
+   **Fixed external-command evaluation protocol (2026-11-17).** No PPO. Built a
+   policy-independent command plan from `(eval seed, env id, global step)` with 4--8 s ee and
+   velocity epochs, stage-3/replay box and standing fraction; reset no longer resamples commands;
+   per-env reset events use `eval_seed*1000003 + env_id*7919 + reset_count*104729` and restore
+   global RNG, so one env's termination cannot change another env's command/reset. Reward, B
+   distance, tracking error and actual contact are captured before reset. Short validation:
+   4 env/30 steps, forced reset env 0 at step 5; 30/30 commands matched plan, cache cleared,
+   other env state unchanged, reset command digest matched plan. Six formal rollouts (3 policies
+   x seeds 42/43, 64 env/200 steps, weight=2 eval) all have equal initial digest, equal plan hash
+   and 200/200 step command digests within each seed. Robust result: both fine-tuned +500 policies
+   still have worse EE position mean/orientation mean than original (aggregate original
+   36.40 mm/0.06449 rad; weight2 41.96/0.07687; weight0 42.45/0.07292); position P95 is slightly
+   better. Safety differences are small and direction-inconsistent (aggregate safety/env-step
+   -0.020117/-0.020049/-0.020031; seed42 fine-tuned worse, seed43 slightly better), so the old
+   weight0 "tracking better, safety worse" claim does not hold. All fixed rollouts had 0 actual
+   non-wheel contacts, 64/64 timeouts, 128 resets, 0 NaN/B failures. **No candidate; keep
+   model_9999.** Old weight0 cross-policy comparison is marked as not strictly paired. Next
+   single check, if authorized, is `arm_deviation` weight; do not scan B weights again. Evidence:
+   `outputs/stage413/b/fixed_eval/`, plan §45.
+
 ## Known minor documentation drift (verify before editing docs)
 
 Recorded because it misleads edits; neither item changes runtime behavior.

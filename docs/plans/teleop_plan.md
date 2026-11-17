@@ -5984,10 +5984,78 @@ RNG 流。**后续命令不严格配对，阶段 aggregate 差异不能全部归
 - weight0 实际 PPO reward 不含 B，不能与 weight2 的实际 reward 直接比较；三组评估统一
   weight=2，safety 数值可比。
 
-**结论：没有部署候选；默认继续 `model_9999`。** B 权重不是跟踪退化的唯一解释，且 weight0
-在安全上更差。不要继续扫 B 权重；下一步先修正评估侧的终止后 command replay/RNG 分叉，
-再做一次同样的阶段配对，然后才考虑其他奖励或微调过程。不自动启动第二种参数实验。
+**结论（旧协议，后经 §45 修正）：没有部署候选；默认继续 `model_9999`。** 本节的跨策略
+比较受终止导致的 command RNG 分叉影响，因果解释受限；固定命令协议见 §45。不要继续扫
+B 权重；下一步先修正评估侧的终止后 command replay/RNG 分叉，再做一次同样的阶段配对，
+然后才考虑其他奖励或微调过程。不自动启动第二种参数实验。
 
 产物：`outputs/stage413/b/weight0/FINAL_REPORT_WEIGHT_ABLATION.json`、
 `weight_ablation_summary.json`、`eval_100/250/500.json`、训练 run
 `logs/rsl_rl/ranger_cr10_teleop/2026-11-16_18-41-15_physproxy_weight0_500/`；计划 §44。
+
+### 45. 固定外生命令评估协议与三策略复评（2026-11-17）
+
+只修评估协议，不训练。三组：original `model_9999`、`physproxy_long_500/model_10498`、
+`physproxy_weight0_500/model_10498`；所有评估统一 weight=2、margin 20 mm。checkpoint 用
+完整 run 路径和 sha256 区分，不靠同名的 `model_10498.pt`。
+
+#### 45.1 命令计划与 reset 隔离
+
+- 命令计划由 `(eval seed, env id, global control step)` 预生成；独立 `numpy` RNG；
+  ee 与 base velocity 各自按 4–8 s epoch 重采样；ee 使用 stage-3 箱 + 30% replay，
+  velocity 保留 standing fraction。
+- `command_manager.reset` 不重采样；`command_manager.compute` 在 observation 之前应用当前/
+  下一步计划；reset 后继续使用该全局时刻应生效的命令。
+- 初始 reset 与后续 reset 随机化按 `eval_seed*1000003 + env_id*7919 + reset_count*104729`
+  单独设种子；每次重置只处理该 env，保存/恢复全局 RNG，因此一个 env 的终止不改变其他
+  env 的命令或随机化。
+- reward、B 距离、tracking error 与实际 PhysX 接触在 reset 前捕获；终止步不丢数据。
+- 命令计划写入 `command_plan_hash` 与每步 digest；实际应用命令与计划不一致时脚本直接抛错。
+
+短验证（4 env、30 steps、强制在 step 5 reset env 0）：
+`initial/all_steps_match_plan=true`、4/4 env、30/30 步一致；forced reset 后 cache cleared、
+other env state unchanged、reset 后命令 digest 仍等于计划；reset counts 7 = initial 4 +
+forced 1 + 2 timeout；文件 `validation_4env.json`。
+
+#### 45.2 六次 rollout
+
+64 env、200 steps、seed 42/43、确定性 mean、corruption off。每个 seed 内三策略：
+initial digest 相同、command plan hash 相同、200/200 step digest 相同。
+
+| seed | policy | Link4↔Link6 <20 mm | safety/env-step | EE pos mean / P95 | EE ori mean / P95 | actual contact | dones / reset |
+|---|---|---:|---:|---:|---:|---:|---:|
+| 42 | original | 50.07% | -0.022395 | 35.78 / 106.75 mm | 0.06882 / 0.23169 | 0 / 0 | 64 / 128 |
+| 42 | weight=2 +500 | 50.63% | -0.023137 | 42.11 / 112.63 | 0.08175 / 0.22991 | 0 / 0 | 64 / 128 |
+| 42 | weight=0 +500 | 51.05% | -0.022401 | 42.67 / 108.28 | 0.07758 / 0.23311 | 0 / 0 | 64 / 128 |
+| 43 | original | 43.91% | -0.017840 | 37.03 / 125.31 | 0.06017 / 0.19558 | 0 / 0 | 64 / 128 |
+| 43 | weight=2 +500 | 42.59% | -0.016962 | 41.80 / 115.90 | 0.07198 / 0.20912 | 0 / 0 | 64 / 128 |
+| 43 | weight=0 +500 | 43.74% | -0.017662 | 42.23 / 121.40 | 0.06825 / 0.19533 | 0 / 0 | 64 / 128 |
+
+汇总（仅两 seed 平均，不作显著性）：
+original 46.99% / -0.020117 / 36.40 / 116.03 mm / 0.06449 / 0.21364；
+weight=2 46.61% / -0.020049 / 41.96 / 114.27 / 0.07687 / 0.21952；
+weight=0 47.40% / -0.020031 / 42.45 / 114.84 / 0.07292 / 0.21422。
+所有 rollout NaN/Inf 0、B 查询失败 0；每 seed reset 均为 128 = initial 64 + 64 timeout；
+actual PhysX 非轮 body-level 接触均为 0/0。主要其他对子仍是 Link3↔Link5（seed42 约
+575/518/401 次 <20 mm，seed43 约 704/659/660 次），无 contact；Link4↔Link6 无 contact。
+
+#### 45.3 判断
+
+- **命令配对修复成立**：initial digest、plan hash 和 200/200 step digest 在每个 seed 内
+  三策略完全一致；终止差异不再改变其他 env 的命令或随机化。
+- **两组 fine-tuned 的跟踪 mean/orientation 仍变差**：original 36.40 mm / 0.06449 rad；
+  weight2 41.96 / 0.07687；weight0 42.45 / 0.07292。position P95 反而略好，故是 mean 与
+  低尾的取舍，不是全面改善。B 不是唯一原因。
+- **安全差异很小且方向不一致**：aggregate safety 三者相差约 1e-4，seed42 weight2/0 更差，
+  seed43 两者略好；Link4↔Link6 报警率变化方向也相反。不能写成 weight0 或 weight2 的安全
+  优势/劣势。
+- **旧 weight=0 跨策略结论修正**：旧评估中 weight0“跟踪更好、安全更差”不成立；旧结果受
+  早期 base_contact 导致的 command RNG 分叉影响，因果解释受限。保留旧产物但标注为
+  “外生命令未严格配对”。
+- **无部署候选**：默认继续 `model_9999`。若下一轮获授权，最值得检查的非 B 项是
+  `arm_deviation`（weight -0.1）是否把手臂拉离命令姿态；这是一个单变量假设，不是本轮结论。
+
+产物：`outputs/stage413/b/fixed_eval/FINAL_REPORT_FIXED_EVAL.json`、
+`fixed_commands_summary.json`、`seed{42,43}_{original,weight2,weight0}.json`、
+`validation_4env.json`；脚本 `scripts/ranger_cr10/rollout_phys_proxy_fixed_commands.py`、
+`summarize_fixed_commands.py`；计划 §45。
