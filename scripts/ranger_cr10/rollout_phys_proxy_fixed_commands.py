@@ -122,6 +122,16 @@ default_pos = torch.tensor(TCP_DEFAULT_POS_B, device=u.device)
 default_quat = torch.tensor(TCP_DEFAULT_QUAT_B, device=u.device)
 anchor_body_id = robot.find_bodies("cr10_Link6")[0][0]
 base_body_id = robot.find_bodies("base_link")[0][0]
+arm_joint_cols = [robot.joint_names.index(f"cr10_joint{i}") for i in range(1, 7)]
+
+# Fixed phase rule, declared before any comparison. In priority order:
+#   reset_transient: episode_length <= RESET_WINDOW (first 1.0 s of an episode, including the
+#                    random initial episode lengths)
+#   switch:          min(command age) <= SWITCH_WINDOW (0.5 s after an ee or velocity change)
+#   hold:            everything else
+RESET_WINDOW = 10
+SWITCH_WINDOW = 5
+PHASES = ("reset_transient", "switch", "hold")
 
 
 def digest_tensor(*tensors) -> str:
@@ -182,9 +192,21 @@ class CommandPlan:
                 self.vel[t:end, env_id] = torch.tensor([vx, 0.0, wz])
                 t = end
 
+        # Command age per env-step: 0 on the step the epoch changed, then +1. Derived from the
+        # plan only, so it is independent of the policy and of resets.
+        self.age_ee = torch.zeros(steps + 1, num_envs, dtype=torch.long)
+        self.age_vel = torch.zeros(steps + 1, num_envs, dtype=torch.long)
+        for t in range(1, steps + 1):
+            changed_ee = (self.ee[t] != self.ee[t - 1]).any(dim=-1)
+            changed_vel = (self.vel[t] != self.vel[t - 1]).any(dim=-1)
+            self.age_ee[t] = torch.where(changed_ee, torch.zeros_like(self.age_ee[t]), self.age_ee[t - 1] + 1)
+            self.age_vel[t] = torch.where(changed_vel, torch.zeros_like(self.age_vel[t]), self.age_vel[t - 1] + 1)
+
         self.ee = self.ee.to(u.device)
         self.vel = self.vel.to(u.device)
         self.standing = self.standing.to(u.device)
+        self.age_ee = self.age_ee.to(u.device)
+        self.age_vel = self.age_vel.to(u.device)
         self.step_digests = [
             digest_tensor(self.ee[t], self.vel[t]) for t in range(steps)
         ]
@@ -289,6 +311,12 @@ def capture_reward(dt, _original=original_reward_compute):
         "failures": int(failures),
         "pos_error": pos_error.detach().clone(),
         "ori_error": ori_error.detach().clone(),
+        "joint_dev_abs_sum": (
+            robot.data.joint_pos[:, arm_joint_cols] - robot.data.default_joint_pos[:, arm_joint_cols]
+        ).abs().sum(dim=-1).detach().clone(),
+        "joint_dev_abs_max": (
+            robot.data.joint_pos[:, arm_joint_cols] - robot.data.default_joint_pos[:, arm_joint_cols]
+        ).abs().amax(dim=-1).detach().clone(),
         "ee_command": ee_cmd.pose_command_b.detach().clone(),
         "vel_command": vel_cmd.vel_command_b.detach().clone(),
         "episode_length": u.episode_length_buf.detach().clone(),
@@ -334,6 +362,27 @@ watch_terms = [name for name in (
 ) if name in term_index]
 term_sums = {name: 0.0 for name in watch_terms}
 term_abs = {name: 0.0 for name in watch_terms}
+
+# Every active reward term, in the manager's own order and with its own weight. The weighted
+# contribution is `_step_reward * dt`; the raw term value is that divided by the weight.
+reward_term_names = list(u.reward_manager.active_terms)
+reward_term_weights = {
+    name: float(u.reward_manager._term_cfgs[reward_term_names.index(name)].weight)
+    for name in reward_term_names
+}
+term_weighted_sums = {name: 0.0 for name in reward_term_names}
+term_raw_sums = {name: 0.0 for name in reward_term_names}
+term_env_steps = 0
+total_reward_sum = 0.0
+total_from_terms = 0.0
+phase_env_steps = {phase: 0 for phase in PHASES}
+phase_pos = {phase: 0.0 for phase in PHASES}
+phase_ori = {phase: 0.0 for phase in PHASES}
+phase_safety = {phase: 0.0 for phase in PHASES}
+phase_reward = {phase: 0.0 for phase in PHASES}
+phase_joint_dev = {phase: 0.0 for phase in PHASES}
+phase_joint_dev_max = {phase: 0.0 for phase in PHASES}
+phase_term_sums = {phase: {name: 0.0 for name in reward_term_names} for phase in PHASES}
 
 pair_stats: dict[tuple[str, str], dict] = {}
 records: list[dict] = []
@@ -402,6 +451,50 @@ for step in range(args.steps):
         term_sums[name] += float(value.sum().item()) * dt
         term_abs[name] += float(value.abs().sum().item()) * dt
 
+    # Every active term, weighted contribution and raw value, plus an independent sum used to
+    # check that the accounted terms reproduce the total reward.
+    weighted_columns = []
+    for name in reward_term_names:
+        column = step_reward[:, term_index[name]] * dt
+        weighted_columns.append(column)
+        term_weighted_sums[name] += float(column.sum().item())
+        weight = reward_term_weights[name]
+        if weight != 0.0:
+            term_raw_sums[name] += float((column / weight / dt).sum().item())
+    weighted_stack = torch.stack(weighted_columns, dim=-1)
+    step_total_from_terms = float(weighted_stack.sum().item())
+    total_reward_sum += float(captured["reward"])
+    total_from_terms += step_total_from_terms
+
+    # Fixed phase split, applied per env-step.
+    episode_length_now = captured["episode_length"]
+    age_ee_now = plan.age_ee[min(step, args.steps)]
+    age_vel_now = plan.age_vel[min(step, args.steps)]
+    command_age = torch.minimum(age_ee_now, age_vel_now)
+    phase_masks = {
+        "reset_transient": episode_length_now <= RESET_WINDOW,
+        "switch": command_age <= SWITCH_WINDOW,
+    }
+    # Priority: reset_transient wins over switch, switch wins over hold.
+    phase_masks["switch"] = phase_masks["switch"] & ~phase_masks["reset_transient"]
+    phase_masks["hold"] = ~phase_masks["reset_transient"] & ~phase_masks["switch"]
+    joint_dev = captured["joint_dev_abs_sum"]
+    joint_dev_max = captured["joint_dev_abs_max"]
+    for phase, mask in phase_masks.items():
+        count = int(mask.sum().item())
+        if count == 0:
+            continue
+        phase_env_steps[phase] += count
+        phase_pos[phase] += float(captured["pos_error"][mask].sum().item())
+        phase_ori[phase] += float(captured["ori_error"][mask].sum().item())
+        phase_safety[phase] += float(captured["safety"][mask].sum().item())
+        phase_reward[phase] += float(weighted_stack[mask].sum().item())
+        phase_joint_dev[phase] += float(joint_dev[mask].sum().item())
+        phase_joint_dev_max[phase] += float(joint_dev_max[mask].sum().item())
+        for name in reward_term_names:
+            phase_term_sums[phase][name] += float(weighted_stack[mask, term_index[name]].sum().item())
+    term_env_steps += int(u.num_envs)
+
     distances = captured["tensor"].detach().cpu().numpy()
     pairs = captured["pairs"]
     env_records = captured["records"]
@@ -453,6 +546,18 @@ for step in range(args.steps):
             "cmd_offset": [float(value) for value in offset[env_index].tolist()],
             "cmd_euler": [float(value) for value in euler[env_index].tolist()],
             "cmd_angle": float(angle[env_index].item()),
+            "cmd_age_ee": int(plan.age_ee[min(step, args.steps)][env_index].item()),
+            "cmd_age_vel": int(plan.age_vel[min(step, args.steps)][env_index].item()),
+            "phase": (
+                "reset_transient"
+                if bool(episode_length[env_index].item() <= RESET_WINDOW)
+                else "switch"
+                if int(min(plan.age_ee[min(step, args.steps)][env_index].item(),
+                           plan.age_vel[min(step, args.steps)][env_index].item())) <= SWITCH_WINDOW
+                else "hold"
+            ),
+            "joint_dev_abs_sum": float(captured["joint_dev_abs_sum"][env_index].item()),
+            "joint_dev_abs_max": float(captured["joint_dev_abs_max"][env_index].item()),
             "episode_length": int(episode_length[env_index].item()),
             "done": bool(done_cpu[env_index].item()),
         })
@@ -482,6 +587,10 @@ for step in range(args.steps):
             f"angle {float(angle.mean().item()):.3f}",
             flush=True,
         )
+
+
+positive_total = sum(value for value in term_weighted_sums.values() if value > 0)
+negative_total = -sum(value for value in term_weighted_sums.values() if value < 0)
 
 
 def ranges_of(term) -> dict:
@@ -550,6 +659,67 @@ summary = {
     },
     "watch_term_sums": term_sums,
     "watch_term_abs_sums": term_abs,
+    "reward_terms": {
+        name: {
+            "weight": reward_term_weights[name],
+            "weighted_sum": term_weighted_sums[name],
+            "raw_sum": term_raw_sums[name],
+            "weighted_per_env_step": term_weighted_sums[name] / max(term_env_steps, 1),
+            "raw_per_env_step": term_raw_sums[name] / max(term_env_steps, 1),
+            "weighted_share_of_positive": (
+                term_weighted_sums[name] / positive_total if term_weighted_sums[name] > 0 and positive_total > 0 else 0.0
+            ),
+            "weighted_share_of_negative": (
+                -term_weighted_sums[name] / negative_total if term_weighted_sums[name] < 0 and negative_total > 0 else 0.0
+            ),
+        }
+        for name in reward_term_names
+    },
+    "reward_consistency": {
+        "term_env_steps": term_env_steps,
+        "total_reward_sum": total_reward_sum,
+        "total_from_terms": total_from_terms,
+        "abs_difference": abs(total_reward_sum - total_from_terms),
+        "relative_difference": (
+            abs(total_reward_sum - total_from_terms) / abs(total_reward_sum) if total_reward_sum else None
+        ),
+    },
+    "phase_rule": {
+        "reset_transient": f"episode_length <= {RESET_WINDOW} control steps (first 1.0 s of an episode)",
+        "switch": f"min(ee command age, velocity command age) <= {SWITCH_WINDOW} control steps",
+        "hold": "neither of the above",
+        "priority": "reset_transient > switch > hold, mutually exclusive",
+        "declared_before_comparison": True,
+    },
+    "phase_split": {
+        phase: {
+            "env_steps": phase_env_steps[phase],
+            "share": phase_env_steps[phase] / max(term_env_steps, 1),
+            "pos_err_mean_m": phase_pos[phase] / phase_env_steps[phase] if phase_env_steps[phase] else None,
+            "ori_err_mean_rad": phase_ori[phase] / phase_env_steps[phase] if phase_env_steps[phase] else None,
+            "safety_per_env_step": phase_safety[phase] / phase_env_steps[phase] if phase_env_steps[phase] else None,
+            "reward_per_env_step": phase_reward[phase] / phase_env_steps[phase] if phase_env_steps[phase] else None,
+            "joint_dev_abs_sum_mean": phase_joint_dev[phase] / phase_env_steps[phase] if phase_env_steps[phase] else None,
+            "joint_dev_abs_max_mean": phase_joint_dev_max[phase] / phase_env_steps[phase] if phase_env_steps[phase] else None,
+            "term_weighted_per_env_step": {
+                name: phase_term_sums[phase][name] / phase_env_steps[phase] if phase_env_steps[phase] else None
+                for name in reward_term_names
+            },
+            "error_and_duration": (
+                "N/A (no env-steps in this phase)" if phase_env_steps[phase] == 0 else "available"
+            ),
+        }
+        for phase in PHASES
+    },
+    "arm_deviation_stats": {
+        "joint_dev_abs_sum_mean": (
+            sum(float(record["joint_dev_abs_sum"]) for record in records) / max(len(records), 1)
+        ),
+        "joint_dev_abs_max_mean": (
+            sum(float(record["joint_dev_abs_max"]) for record in records) / max(len(records), 1)
+        ),
+        "note": "Sum and max of |q - q_default| over cr10_joint1..6, metres of joint angle (rad).",
+    },
     "actual_physx_contacts": {
         "nonwheel_body_net_force_gt_100n_env_steps": actual_contact_env_steps,
         "nonwheel_body_events": actual_contact_body_events,

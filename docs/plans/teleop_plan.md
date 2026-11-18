@@ -6044,11 +6044,15 @@ actual PhysX 非轮 body-level 接触均为 0/0。主要其他对子仍是 Link3
 - **命令配对修复成立**：initial digest、plan hash 和 200/200 step digest 在每个 seed 内
   三策略完全一致；终止差异不再改变其他 env 的命令或随机化。
 - **两组 fine-tuned 的跟踪 mean/orientation 仍变差**：original 36.40 mm / 0.06449 rad；
-  weight2 41.96 / 0.07687；weight0 42.45 / 0.07292。position P95 反而略好，故是 mean 与
-  低尾的取舍，不是全面改善。B 不是唯一原因。
+  weight2 41.96 / 0.07687；weight0 42.45 / 0.07292。position P95 的方向**随 seed 变化**
+  （seed42 变差 +5.88 mm，seed43 变好 −9.41 mm），不能作为一致证据；能一致成立的只有
+  position/orientation 的**均值**退化。B 不是唯一原因。
 - **安全差异很小且方向不一致**：aggregate safety 三者相差约 1e-4，seed42 weight2/0 更差，
   seed43 两者略好；Link4↔Link6 报警率变化方向也相反。不能写成 weight0 或 weight2 的安全
-  优势/劣势。
+  优势/劣势。符号约定：安全项是**带符号的贡献**，更负更差；weight0 − weight2 的 aggregate
+  差值为 **+1.8e-5**（weight0 略接近 0，即略好），旧报告写成 −1.8e-5 是符号错误，已更正。
+  两 seed 的具体数字以 §45.2 逐 seed 表为准；两 seed 平均值只作补充，P95 的跨 seed 数字是
+  **各 seed P95 的平均**，不是合并样本 P95。
 - **旧 weight=0 跨策略结论修正**：旧评估中 weight0“跟踪更好、安全更差”不成立；旧结果受
   早期 base_contact 导致的 command RNG 分叉影响，因果解释受限。保留旧产物但标注为
   “外生命令未严格配对”。
@@ -6059,3 +6063,122 @@ actual PhysX 非轮 body-level 接触均为 0/0。主要其他对子仍是 Link3
 `fixed_commands_summary.json`、`seed{42,43}_{original,weight2,weight0}.json`、
 `validation_4env.json`；脚本 `scripts/ranger_cr10/rollout_phys_proxy_fixed_commands.py`、
 `summarize_fixed_commands.py`；计划 §45。
+
+### 46. 微调到底在改善什么：奖励分项与阶段归因（2026-11-18）
+
+不训练、不删 `arm_deviation`。把 §45 的六次固定命令评估补成“全部 15 项奖励 + 阶段划分”，
+回答两个问题：微调改善了什么目标，跟踪损失落在哪个时段。
+
+#### 46.1 口径与一致性
+
+- 命令计划、初始状态、checkpoint 和协议不变；三策略 × 两 seed 的 initial digest 与
+  command plan hash 在每个 seed 内完全相同。
+- 全部 15 项奖励的和与实际总 reward 的最大绝对差 5.72e-5、最大相对差 **4.67e-9**，账目完整。
+- 阶段规则在比较前声明、互斥、优先级 `reset_transient > switch > hold`：
+  `reset_transient` = `episode_length ≤ 10`（回合前 1.0 s，含随机初始 episode 长度）；
+  `switch` = `min(ee 命令年龄, 速度命令年龄) ≤ 5`（切换后 0.5 s）；其余为 `hold`。
+  实际占比 reset 5.0%、switch 17.9%、hold 77.1%。
+- `arm_deviation` 的奖励项原始值等于 `-sum|q-q_default|`（三策略都逐位吻合），所以奖励项与
+  实际关节偏离是同一个测量。
+
+#### 46.2 微调没有提高同协议总奖励
+
+| 指标（两 seed 平均，补充用） | original | weight=2 +500 | weight=0 +500 |
+|---|---:|---:|---:|
+| 总 reward / env-step | 0.96296 | 0.95525 | 0.95579 |
+| 差值 vs original | — | **−0.00770** | **−0.00717** |
+| EE position mean | 36.40 mm | 41.96 mm | 42.45 mm |
+| EE orientation mean | 0.06449 rad | 0.07687 rad | 0.07292 rad |
+| safety / env-step | −0.020117 | −0.020049 | −0.020031 |
+| sum\|q−q_default\| | 3.264 rad | 3.179 | 3.227 |
+
+两组微调在同协议下总奖励**更低**（−0.80% / −0.74%），不只是跟踪变差。
+
+#### 46.3 哪些收益抵消了跟踪损失（per env-step，带符号）
+
+| 奖励项 | weight2 − original | weight0 − original |
+|---|---:|---:|
+| `end_effector_orientation_tracking` | **−0.004948** | −0.003369 |
+| `end_effector_position_tracking_exp` | −0.001325 | −0.001394 |
+| `end_effector_position_tracking_fine` | −0.001438 | −0.001550 |
+| `track_lin_vel_xy_exp` | −0.000936 | −0.000423 |
+| `track_ang_vel_z_exp` | −0.000529 | −0.000646 |
+| `arm_deviation` | **+0.000855** | +0.000366 |
+| `dof_torques_l2` | +0.000364 | −0.000050 |
+| `dof_acc_l2` | +0.000135 | −0.000218 |
+| `action_rate_l2` | +2.79e-5 | +4.17e-6 |
+| `joint_power` | +1.83e-5 | +2.03e-6 |
+| `dof_pos_limits` | +4.14e-6 | +1.54e-5 |
+| `arm_sensor_clearance` | +6.79e-5 | +8.58e-5 |
+| 其余（`lin_vel_z_l2`/`ang_vel_xy_l2`/`flat_orientation_l2`） | ~±1e-6 | ~±1e-6 |
+
+- 损失构成（weight2）：姿态跟踪 **53.9%**、位置跟踪两项 30.1%、底盘速度跟踪 16.0%。
+- 全部正收益合计只抵消 **16.0%（weight2）/ 6.2%（weight0）** 的负项，净额仍为负。
+- 收益的性质是“更平滑/更省力（力矩、加速度、动作变化、功率）+ 手臂更靠近默认姿态 +
+  极小的安全项改善”，代价是姿态与位置精度。
+- 逐 seed 的 safety 差值符号相反（seed42 两组更差、seed43 两组更好），所以表里的
+  aggregate 安全“改善”只是两个相反 seed 的平均，不能当作结论。
+
+#### 46.4 跟踪损失落在 `hold`，不是切换或 reset
+
+| 阶段（占比） | 指标 | original | weight2 | weight0 | 相对变化 (w2 / w0) |
+|---|---|---:|---:|---:|---:|
+| hold (77.1%) | position | 24.86 mm | 30.92 | 31.88 | **+24.4% / +28.2%** |
+| | orientation | 0.04733 | 0.06106 | 0.05632 | **+29.0% / +19.0%** |
+| switch (17.9%) | position | 74.11 mm | 77.78 | 76.73 | +5.0% / +3.5% |
+| | orientation | 0.12728 | 0.13524 | 0.13343 | +6.3% / +4.8% |
+| reset (5.0%) | position | 79.44 mm | 83.87 | 82.88 | +5.6% / +4.3% |
+| | orientation | 0.10458 | 0.11172 | 0.11233 | +6.8% / +7.4% |
+
+- 超额误差质量（比 original 多出来的部分）按阶段分解：**hold 承担 82.9%（position）/
+  86.2%（orientation）**，switch 12.7%/10.7%，reset 4.4%/3.1%（seed42；seed43 同序）。
+- 逐 seed 的 hold 位置误差：seed42 24.40 → 31.20（w2）/ 32.22（w0）mm；seed43 25.33 →
+  30.65 / 31.53 mm；姿态误差同样在两个 seed 都变差。**方向一致。**
+- 结论：跟踪退化是**保持阶段的持续偏置**，不是命令切换响应或 reset 瞬态。
+- 命令幅度分箱（seed42）：original 的位置误差随 |offset| 从 27.4 mm 升到 37.2 mm、随转角
+  从 32.7 mm 升到 38.5 mm（>60° 时姿态误差 0.111 rad）；两组微调在每个箱里都更差，
+  退化是**全幅度范围**的，不是只在大目标上。
+
+#### 46.5 arm_deviation 有新证据，但不足以当唯一变量
+
+- 实际 `sum|q−q_default|` 从 3.264 rad 降到 3.179（w2，−2.6%）/ 3.227（w0，−1.1%），
+  对应 +0.000855 / +0.000366 per env-step。
+- 这只抵消净损失的 **11% / 5%**，或位置跟踪损失的 **31% / 12%**；无法解释 0.0077 的退化。
+- 历史证据（§6.10、§7.5：只解释 5–15% 幅值代价、不解释方向偏差）与本轮方向一致，
+  但仍只适用于各自测试条件。
+- **因此不支持把 `arm_deviation` 作为下一步的单变量消融对象。**
+
+#### 46.6 尚未区分的关键混杂
+
+微调不仅“多训了 500 步”，还换了物理与安全项：
+
+- 原始训练：`ranger_cr10.usd`，`enabled_self_collisions=False`，间隙项 margin **15 mm**；
+- 微调：`ranger_cr10_simple_v2_flat.usd`，`enabled_self_collisions=True`，B 代理 margin **20 mm**。
+
+`hold` 阶段的持续偏置与“新碰撞约束把原来可达的位形挡住了”完全一致。所以在没有做跨环境
+判别之前，不能说“微调把策略训坏了”。
+
+#### 46.7 结论与唯一后续
+
+- 微调没有提高同协议总奖励；收益是平滑度/省力/略小关节偏离，代价是姿态与位置精度。
+- 损失集中在 `hold`（≈83% 的超额误差），不在 `switch` 或 `reset` 瞬态。
+- `arm_deviation` 是真实但小的收益项，不足以解释退化。
+- **停止这条微调分支，不再扫静态奖励权重。** 唯一后续是一个不训练的跨环境判别：
+  把两个 +500 checkpoint 放进原始 teleop 环境（原网格、自碰撞 OFF、15 mm margin），
+  在同一命令计划与初始状态下只比较跟踪：
+  - 若跟踪回到 original 水平 → 退化来自物理环境变化，转“原策略 + 新物理模型”的部署兼容
+    方向，不动奖励；
+  - 若仍差 → 是微调本身，关闭分支，保留 `model_9999`，转向 VLN 观测任务验证。
+
+产物：`outputs/stage413/b/attribution/FINAL_REPORT_ATTRIBUTION.json`、
+`attribution_summary.json`、`config_diff.json`、六份 `seed{42,43}_{original,weight2,weight0}.json`、
+`smoke_4env.json`；脚本 `rollout_phys_proxy_fixed_commands.py`（补齐全部奖励项与阶段字段）、
+`analyze_fixed_eval.py`、`run_attribution_round.sh`；计划 §46。
+
+#### 46.8 旧报告用词更正
+
+- **safety 差值符号**：weight0 − weight2 的 aggregate 差值是 **+1.8e-5**（weight0 略接近 0），
+  旧报告写成 −1.8e-5；符号约定是“带符号贡献，更负更差”。
+- **删除“低尾”**：position P95 方向随 seed 变化（seed42 +5.88 mm、seed43 −9.41 mm），
+  只有均值退化是一致的，`P95` 不能当一致证据。
+- **P95 口径**：跨 seed 的 P95 是**各 seed P95 的平均**，不是合并样本 P95。

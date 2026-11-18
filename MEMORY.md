@@ -717,3 +717,23 @@ gripper base and the lidar are **not closed**, so their containment is unknown r
   small and direction-inconsistent across seeds. The old weight0 safety/tracking tradeoff does
   not survive. Keep model_9999; next non-B hypothesis is `arm_deviation`, not another B-weight
   sweep.
+- **Fine-tuning lowered the same-protocol total reward, and the loss is a hold-phase bias
+  (2026-11-18).** With all 15 reward terms logged (term sum vs actual total reward relative
+  difference 4.67e-9), the two +500 policies score 0.95525 / 0.95579 per env-step against the
+  original 0.96296. Loss composition for weight=2: orientation tracking 53.9%, position tracking
+  30.1%, base velocity tracking 16.0%; gains (arm_deviation, dof_torques_l2, dof_acc_l2,
+  action_rate_l2, joint_power, safety) offset only 16.0% / 6.2%. The degradation is in `hold`
+  (77% of steps): position 24.86 -> 30.92 / 31.88 mm, orientation 0.0473 -> 0.0611 / 0.0563 rad,
+  worse in both seeds, carrying ~83-88% of the excess error mass; switch and reset contribute
+  little. So it is a persistent steady-state bias, not a switch-response or reset-transient
+  problem, and a reward-weight sweep cannot target it.
+- **`arm_deviation` is a real but small offset, not a proven cause (2026-11-18).** Its gain is
+  +0.000855 (weight2) / +0.000366 (weight0) per env-step, matching a genuine drop in
+  sum|q - q_default| from 3.264 to 3.179 / 3.227 rad; that is only 11% / 5% of the net loss.
+  Do not spend a training round on an arm_deviation-only ablation.
+- **The fine-tune also changed the physics, and that is still untested (2026-11-18).** Original
+  training used `ranger_cr10.usd` with self-collision off and a 15 mm margin; the fine-tune used
+  the v2 box asset with self-collision on and a 20 mm B margin. A persistent hold-phase bias is
+  equally consistent with the new collision constraint blocking previously reachable postures.
+  The cheapest discriminator needs no training: evaluate the fine-tuned checkpoints in the
+  original teleop environment and compare tracking only.

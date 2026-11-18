@@ -1058,9 +1058,37 @@ Artifacts (each verified by loading/playing it back, not by exit code):
    -0.020117/-0.020049/-0.020031; seed42 fine-tuned worse, seed43 slightly better), so the old
    weight0 "tracking better, safety worse" claim does not hold. All fixed rollouts had 0 actual
    non-wheel contacts, 64/64 timeouts, 128 resets, 0 NaN/B failures. **No candidate; keep
-   model_9999.** Old weight0 cross-policy comparison is marked as not strictly paired. Next
-   single check, if authorized, is `arm_deviation` weight; do not scan B weights again. Evidence:
+   model_9999.** Old weight0 cross-policy comparison is marked as not strictly paired. The
+   `arm_deviation` hypothesis suggested here was tested in the next entry and is **not**
+   supported as the single next ablation. Evidence:
    `outputs/stage413/b/fixed_eval/`, plan §45.
+
+   **Attribution of the fine-tuning tracking loss: reward terms and phases (2026-11-18).** No
+   PPO, no reward deletion. The six fixed-command rollouts were re-run with all 15 active reward
+   terms recorded (weight x dt per env-step plus raw term value) and a fixed phase split
+   (`reset_transient` = episode_length <= 10, `switch` = min command age <= 5, `hold` = rest;
+   priority reset > switch > hold). Term sum vs actual total reward: max abs difference 5.72e-5,
+   max relative 4.67e-9. Results (two-seed means; per-seed tables are in the artifact): the
+   fine-tuned policies have **lower same-protocol total reward** than original (0.96296 vs
+   0.95525 weight2, 0.95579 weight0; -0.00770 / -0.00717 per env-step). Loss composition
+   (weight2): orientation tracking 53.9%, position tracking (both terms) 30.1%, base velocity
+   tracking 16.0%. Gains offset only 16.0% / 6.2% of the negative total, and consist of
+   arm_deviation +0.000855 / +0.000366, dof_torques_l2 +0.000364 / -0.000050, dof_acc_l2
+   +0.000135 / -0.000218, action_rate +2.8e-5 / +4.2e-6, joint_power +1.8e-5 / +2.0e-6, safety
+   +6.8e-5 / +8.6e-5. Error sits in **hold**: position 24.86 -> 30.92 / 31.88 mm and orientation
+   0.0473 -> 0.0611 / 0.0563 rad, worse in both seeds, carrying 82.9% (weight2) / 87.6%
+   (weight0) of the excess position-error mass; switch and reset are a small remainder, so this
+   is a persistent bias, not a switch-response or reset-transient problem. Error grows with
+   command magnitude for every policy and the fine-tuned ones are worse in every bin.
+   `arm_deviation` gains correspond to a real but small change (sum|q-q_default| 3.264 ->
+   3.179 / 3.227 rad), worth 11% / 5% of the net loss, so it is **not** supported as the single
+   next ablation. Remaining untested confounder: the fine-tune also changed the physical
+   environment (self-collision ON, box geometry, margin 20 mm vs the original 15 mm), which is
+   consistent with a persistent hold-phase bias. **Stop the fine-tune branch; run one
+   cross-environment discriminator with no training** (fine-tuned checkpoints evaluated in the
+   original teleop environment, tracking only). Evidence:
+   `outputs/stage413/b/attribution/FINAL_REPORT_ATTRIBUTION.json`,
+   `attribution_summary.json`, `config_diff.json`; plan §46.
 
 ## Known minor documentation drift (verify before editing docs)
 
