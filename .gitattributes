@@ -24,4 +24,10 @@ rangerboxcr10lidar_description/meshes/** -filter -diff -merge -text
 # robot, kept as a regular Git object so a clone needs no git-lfs.
 source/LeggedManip_Lab/LeggedManip_Lab/assets/ranger_cr10/configuration/ranger_cr10_base.usd -filter -diff -merge -text
 
+# Published model checkpoints are regular Git objects: the 5.1 MB baseline fits well under
+# GitHub's per-file limit, and the LFS batch upload endpoint was unreachable from the machine
+# that published it (see docs/plans/teleop_plan.md section 47). A clone therefore needs no
+# git-lfs to obtain the baseline policy. Must come after the *.pt rule above.
+models/**/*.pt -filter -diff -merge -text
+
 *.bat text eol=crlf
