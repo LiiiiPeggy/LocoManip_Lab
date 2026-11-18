@@ -6182,3 +6182,95 @@ actual PhysX 非轮 body-level 接触均为 0/0。主要其他对子仍是 Link3
 - **删除“低尾”**：position P95 方向随 seed 变化（seed42 +5.88 mm、seed43 −9.41 mm），
   只有均值退化是一致的，`P95` 不能当一致证据。
 - **P95 口径**：跨 seed 的 P95 是**各 seed P95 的平均**，不是合并样本 P95。
+
+### 47. 发布基线、跨环境对照与清理（2026-11-18）
+
+#### 47.1 发布 `model_9999`
+
+- 身份核对：源 checkpoint 与发布副本的 SHA-256 均为
+  `94ffb7af2f9d0d8864920fb2a38f799938f2b7afffe8c7a75a1050057a5d7ce5`（5,125,429 B）。
+- 目录沿用加载器既有约定（加载器读 checkpoint 同级的 `params/agent.yaml`），因此不需要改任何
+  加载入口：
+
+```
+models/ranger_cr10/model_9999.pt
+models/ranger_cr10/params/agent.yaml
+models/ranger_cr10/README.md
+```
+
+- `.pt` 在本仓库默认走 Git LFS（`.gitattributes`）。本机 LFS 上传端点不可达
+  （`lfs.github.com/.../objects/batch` 返回 EOF，去除 LFS 文件后同一提交才推送成功），
+  因此对 `models/**/*.pt` 显式改为普通 Git 对象（`-filter -diff -merge -text`，置于 `*.pt`
+  规则之后），并在 `.pre-commit-config.yaml` 的 `check-added-large-files` 排除 `^models/`
+  （文件 5,125 KB 略超 5000 KB 限制）。与仓库对 liDAR 网格和某个 USD 的既有例外同一处理方式。
+- annotated tag `ranger-cr10-model-9999` 建立在包含模型与说明的提交 `6772068` 上，
+  从远端按 tag 取回后校验与加载均通过。
+
+#### 47.2 跨环境对照（六次新 rollout + 六次复用）
+
+同 seed 的两套环境使用**完全相同**的命令计划（seed42 `70fd0ab5…`、seed43 `ece81a08…`），
+200/200 步命令 digest 一致，64 env 全部核对；两套环境的 `initial_digest` **完全相同**
+（seed42 `780874e9…`、seed43 `56f71bb3…`），该哈希覆盖全部关节位置、根位姿、两个命令张量
+与 episode 长度，所以**跨资产初态按关节名无差异**（初值不等于配置里的默认姿态，因为
+`reset_robot_joints` 按 U(0.5,1.5) 缩放）。控制周期两套环境都是 10 Hz 策略 / 200 Hz 物理，
+EE 测量点都是 `cr10_Link6` + 0.14389 m 工具偏移、`base_link` 坐标。
+
+`hold` 阶段（`episode_length > 10` 且 `min(命令年龄) > 5`）：
+
+| 环境 | seed | 策略 | hold 步数 | 位置误差 mm | 姿态误差 mrad |
+|---|---|---:|---:|---:|---:|
+| v2 | 42 | original | 9880 | 24.396 | 50.893 |
+| v2 | 42 | weight2 | 9880 | 31.202 | 65.332 |
+| v2 | 42 | weight0 | 9880 | 32.223 | 60.380 |
+| v2 | 43 | original | 9858 | 25.327 | 43.761 |
+| v2 | 43 | weight2 | 9858 | 30.645 | 56.788 |
+| v2 | 43 | weight0 | 9858 | 31.531 | 52.256 |
+| teleop | 42 | original | 9880 | 24.365 | 50.934 |
+| teleop | 42 | weight2 | 9880 | 31.166 | 65.416 |
+| teleop | 42 | weight0 | 9880 | 32.219 | 60.441 |
+| teleop | 43 | original | 9858 | 25.331 | 43.802 |
+| teleop | 43 | weight2 | 9858 | 30.666 | 56.797 |
+| teleop | 43 | weight0 | 9858 | 31.544 | 52.286 |
+
+相对**同环境** `model_9999` 的增量（两 seed 平均）：
+
+| 策略 | v2 位置 / 姿态 | teleop 位置 / 姿态 | v2 − teleop |
+|---|---:|---:|---:|
+| weight2 | +6.062 mm / +13.733 mrad | +6.068 mm / +13.739 mrad | −0.006 mm / −0.006 mrad |
+| weight0 | +7.015 mm / +8.991 mrad | +7.033 mm / +8.995 mrad | −0.018 mm / −0.004 mrad |
+
+**结论：跟踪退化与环境配置无关**——同一策略在两套环境里的 `hold` 误差差异小于 0.02 mm 和
+0.006 mrad。因此 §46.6 的物理混杂被排除：退化来自微调本身，不能归因到自碰撞开关、某个
+碰撞体或具体接触对子（接触记录也不支持：十二次 rollout 的非轮 body-level 接触全为 0）。
+
+间隙奖励本身不可跨环境比较：同一策略每 env-step 为 −0.0224（v2，占负奖励 1.6%）对
+−0.1309（teleop，10.9%），因为两套配置的距离源与 margin（20 mm / 15 mm）不同，只按环境
+报告，不做差值。
+
+#### 47.3 决定
+
+没有候选同时改善跟踪与安全（跟踪一致退化，安全差异随 seed 变号），因此**结束 B 安全奖励的
+微调路线**；后续固定夹爪 + D455 观测验证采用 **`model_9999` + v2 环境**作为仿真基线。
+
+#### 47.4 清理
+
+先测量：`logs/` 1.3 GB、`outputs/` 473 MB（`outputs/stage413` 231 MB 最大）。占用最大的
+项目全部是证据（训练 run 与十二份评估 rollout），按仓库规则保留。实际删除的是**可确认无
+独有证据**的接口自检 run 与可再生成的缓存：
+
+- 14 个接口自检 / 冒烟训练目录（`*_smoke*`、`*_diag*`、`*_smoke2`、`stage45j_smoke`、
+  `stage47_smoke3`、`stage411_smoke` 等），均未被文档、脚本或报告引用，约 61 MB；
+- 一个临时包装脚本 `run_cross_env.sh`。
+
+保留：已发布模型、12 份本轮/上轮评估 rollout、两个 +500 checkpoint 及其 500-update run、
+`attribution/`、`fixed_eval/`、`dist_explain/`、`lr_restore/`、`long_ppo/`、`weight0/`、
+`simple_collision_v2/` 下被 §38–§47 引用的产物、v2 本地 USD 与形状表、`M agx`、用户修改。
+
+用途不明确、**保留待用户判断**：`logs/rsl_rl/ranger_cr10_teleop/2026-10-29_20-04-13_stage45j_hy_test`
+（5.0 MB，未被引用，名称含 `test` 但无旁证说明其用途）。
+
+产物：`outputs/stage413/b/cross_env/cross_env_table.json`（本表，逐值读自十二份 rollout）、
+`teleop_seed{42,43}_{original,weight2,weight0}.json`、`smoke_teleop_4env.json`；
+脚本 `scripts/ranger_cr10/compare_env_tracking.py`、`run_cross_env_round.sh`；
+`rollout_phys_proxy_fixed_commands.py` 新增 `--env {simplecoll,teleop}`、跨资产初态记录与
+`env_name` 字段；计划 §47。

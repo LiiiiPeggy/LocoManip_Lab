@@ -54,6 +54,13 @@ ap.add_argument("--out", required=True)
 ap.add_argument("--random-initial-episode-length", action=argparse.BooleanOptionalAction, default=True)
 ap.add_argument("--force-reset-step", type=int, default=-1)
 ap.add_argument("--force-reset-env", type=int, default=0)
+ap.add_argument(
+    "--env",
+    choices=("simplecoll", "teleop"),
+    default="simplecoll",
+    help="simplecoll = v2 box asset with self-collision ON (B reward); teleop = the original "
+         "mesh asset with self-collision OFF and the 15 mm clearance term.",
+)
 args = ap.parse_args()
 
 app = AppLauncher(headless=True).app
@@ -76,6 +83,9 @@ import LeggedManip_Lab.tasks  # noqa: E402
 from LeggedManip_Lab.tasks.manager_based.leggedmanip_lab.config.ranger_cr10.simple_collision_env_cfg import (  # noqa: E402
     RangerCr10TeleopSimpleCollisionEnvCfg,
 )
+from LeggedManip_Lab.tasks.manager_based.leggedmanip_lab.config.ranger_cr10.teleop_env_cfg import (  # noqa: E402
+    RangerCr10TeleopEnvCfg,
+)
 from LeggedManip_Lab.tasks.manager_based.leggedmanip_lab.mdp.phys_proxy_reward import (  # noqa: E402
     cached_pair_distances,
     phys_proxy_snapshot,
@@ -91,7 +101,24 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 CHECKPOINT = args.checkpoint if os.path.isabs(args.checkpoint) else os.path.join(ROOT, args.checkpoint)
 OUT = args.out if os.path.isabs(args.out) else os.path.join(ROOT, args.out)
 
-cfg = RangerCr10TeleopSimpleCollisionEnvCfg()
+ENV_SPECS = {
+    "simplecoll": {
+        "gym_id": "RANGER-CR10-TELEOP-SIMPLECOLL",
+        "cfg": RangerCr10TeleopSimpleCollisionEnvCfg,
+        "asset": "ranger_cr10_simple_v2_flat.usd (box collisions, self-collisions ON)",
+        "clearance_term": "phys_proxy_clearance_penalty (B proxy, 44 pairs, 20 mm)",
+    },
+    "teleop": {
+        "gym_id": "RANGER-CR10-TELEOP-WBC",
+        "cfg": RangerCr10TeleopEnvCfg,
+        "asset": "ranger_cr10.usd (original meshes, self-collisions OFF)",
+        "clearance_term": "sensor_clearance_penalty (safety.py proxy, 15 mm margin)",
+    },
+}
+ENV_NAME = args.env
+ENV_SPEC = ENV_SPECS[ENV_NAME]
+
+cfg = ENV_SPEC["cfg"]()
 cfg.seed = args.seed
 cfg.scene.num_envs = args.num_envs
 cfg.commands.ee_pose.debug_vis = False
@@ -99,7 +126,7 @@ cfg.observations.policy.enable_corruption = False
 
 torch.manual_seed(args.seed)
 np.random.seed(args.seed)
-env = gym.make("RANGER-CR10-TELEOP-SIMPLECOLL", cfg=cfg)
+env = gym.make(ENV_SPEC["gym_id"], cfg=cfg)
 u = env.unwrapped
 with open(os.path.join(os.path.dirname(CHECKPOINT), "params", "agent.yaml")) as handle:
     train_cfg = yaml.safe_load(handle)
@@ -347,6 +374,16 @@ initial_digest = digest_tensor(
     u.episode_length_buf,
 )
 initial_command_digest = digest_tensor(ee_cmd.pose_command_b, vel_cmd.vel_command_b)
+# Named initial state, so the two assets can be compared joint by joint rather than by a
+# single hash that is expected to differ.
+initial_joint_pos_by_name = {
+    name: float(robot.data.joint_pos[0, index].item())
+    for index, name in enumerate(robot.joint_names)
+}
+initial_arm_joint_pos = {
+    f"cr10_joint{i}": float(robot.data.joint_pos[0, arm_joint_cols[i - 1]].item()) for i in range(1, 7)
+}
+initial_base_height_m = float(robot.data.root_pose_w[0, 2].item())
 if initial_command_digest != plan.step_digests[0]:
     raise RuntimeError("initial command does not match the pre-generated plan")
 
@@ -604,6 +641,18 @@ summary = {
     "num_envs": args.num_envs,
     "steps": args.steps,
     "seed": args.seed,
+    "env_name": ENV_NAME,
+    "env_id": ENV_SPEC["gym_id"],
+    "env_asset": ENV_SPEC["asset"],
+    "env_clearance_term": ENV_SPEC["clearance_term"],
+    "initial_joint_pos_by_name": initial_joint_pos_by_name,
+    "initial_arm_joint_pos": initial_arm_joint_pos,
+    "initial_base_height_m": initial_base_height_m,
+    "robot_joint_names": list(robot.joint_names),
+    "ee_anchor_body": "cr10_Link6",
+    "ee_measure_frame": "base_link (TCP offset applied to the anchor body)",
+    "control_dt_s": float(dt),
+    "decimation": int(u.cfg.decimation),
     "initial_digest": initial_digest,
     "initial_command_digest": initial_command_digest,
     "command_plan_hash": plan.plan_hash,

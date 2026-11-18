@@ -737,3 +737,20 @@ gripper base and the lidar are **not closed**, so their containment is unknown r
   equally consistent with the new collision constraint blocking previously reachable postures.
   The cheapest discriminator needs no training: evaluate the fine-tuned checkpoints in the
   original teleop environment and compare tracking only.
+- **The fine-tuning tracking degradation is environment-independent (2026-11-18).** The same
+  three policies evaluated in the original teleop env (mesh asset, self-collisions off, 15 mm
+  term) and in v2 give identical hold-phase increments over the same environment's model_9999:
+  weight2 +6.062 mm / +13.733 mrad (v2) vs +6.068 / +13.739 (teleop), weight0 +7.015 / +8.991 vs
+  +7.033 / +8.995; the cross-environment difference is under 0.02 mm and 0.006 mrad. Both
+  environments share the same command plan (identical hashes and 200/200 step digests) and the
+  same `initial_digest`, so there is no cross-asset initial-state difference to explain it. The
+  physics change is therefore excluded, the B-weight fine-tune branch is closed, and
+  `model_9999` + v2 is the simulation baseline for the fixed-gripper / D455 validation.
+- **`model_9999` is published in-repo as a plain Git object (2026-11-18).**
+  `models/ranger_cr10/model_9999.pt` (+ `params/agent.yaml`, `README.md`), SHA-256
+  `94ffb7af2f9d0d8864920fb2a38f799938f2b7afffe8c7a75a1050057a5d7ce5`, tag
+  `ranger-cr10-model-9999`. `.pt` normally goes through Git LFS, but the LFS batch upload
+  endpoint is unreachable from this machine (EOF on `objects/batch`), so `models/**/*.pt` carries
+  an explicit `-filter -diff -merge -text` rule in `.gitattributes` (after the `*.pt` rule) and
+  `^models/` is excluded from `check-added-large-files`. Loaders read `params/agent.yaml` next to
+  the checkpoint, so the published layout needs no loader change.

@@ -1090,6 +1090,27 @@ Artifacts (each verified by loading/playing it back, not by exit code):
    `outputs/stage413/b/attribution/FINAL_REPORT_ATTRIBUTION.json`,
    `attribution_summary.json`, `config_diff.json`; plan §46.
 
+   **Baseline published, cross-environment control done, experiment dirs cleaned (2026-11-18).**
+   Published `model_9999` as `models/ranger_cr10/{model_9999.pt,params/agent.yaml,README.md}`
+   with SHA-256 `94ffb7af2f9d0d8864920fb2a38f799938f2b7afffe8c7a75a1050057a5d7ce5`
+   (5,125,429 B), annotated tag `ranger-cr10-model-9999` on commit `6772068`, and a verified
+   remote round-trip. Because the LFS batch endpoint is unreachable from this machine, `models/**/*.pt`
+   is stored as a regular Git object (documented exception in `.gitattributes` plus a
+   `check-added-large-files` exclusion for `^models/`). Cross-environment control: same three
+   policies in the original teleop env (`RANGER-CR10-TELEOP-WBC`, mesh asset, self-collisions
+   off, 15 mm term) and in v2, same pre-generated plan (plan hashes and 200/200 step digests
+   identical; `initial_digest` identical across assets, so no cross-asset initial-state
+   difference). Hold-phase increments vs the same environment's `model_9999`, two-seed means:
+   weight2 +6.062 mm / +13.733 mrad (v2) vs +6.068 mm / +13.739 mrad (teleop); weight0
+   +7.015 / +8.991 vs +7.033 / +8.995; v2 minus teleop below 0.02 mm and 0.006 mrad.
+   **The tracking degradation is environment-independent**, so the §46.6 physics confounder is
+   excluded and the branch is closed: adopt `model_9999` + v2 as the simulation baseline for the
+   fixed-gripper / D455 observation validation. Cleanup: measured `logs/` 1.3 GB and `outputs/`
+   473 MB, found the largest items are evidence and kept them; deleted 14 unreferenced interface
+   smoke/diagnostic run dirs (~75 MB) and one temporary wrapper script; left
+   `2026-10-29_20-04-13_stage45j_hy_test` (5.0 MB) in place as purpose-unclear for the user to
+   decide. Evidence: `outputs/stage413/b/cross_env/cross_env_table.json`; plan §47.
+
 ## Known minor documentation drift (verify before editing docs)
 
 Recorded because it misleads edits; neither item changes runtime behavior.
