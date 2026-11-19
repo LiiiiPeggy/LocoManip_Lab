@@ -69,8 +69,13 @@ for name, view in results["views"].items():
     drift_u = slope_u * duration
     drift_v = slope_v * duration
     base_drift = np.array([r["base_drift_xy_m"] for r in records], dtype=float)
-    yaw = np.unwrap(np.radians(np.array([r.get("base_yaw_deg", 0.0) for r in records], dtype=float)))
-    yaw_drift_deg = float(np.degrees(yaw[-1] - yaw[0])) if len(yaw) > 1 else 0.0
+    # Only A2-era records carry base_yaw_deg. Do not default a missing field to 0.0: a silent zero
+    # reads as a measured "no yaw drift", which is exactly the opposite of the truth for A1.
+    if records and all("base_yaw_deg" in r for r in records):
+        yaw = np.unwrap(np.radians(np.array([r["base_yaw_deg"] for r in records], dtype=float)))
+        yaw_drift_deg = float(np.degrees(yaw[-1] - yaw[0]))
+    else:
+        yaw_drift_deg = None
 
     summary["views"][name] = {
         "frames": int(len(us)),
@@ -89,7 +94,8 @@ for name, view in results["views"].items():
         "base_yaw_drift_deg": yaw_drift_deg,
         "predicted_px_from_base_motion": {
             "from_translation": float(base_drift.max()) * 372.0 / 0.35,
-            "from_yaw": abs(yaw_drift_deg) * 372.0 * math.tan(math.radians(1.0)),
+            "from_yaw": None if yaw_drift_deg is None else abs(yaw_drift_deg) * 372.0 * math.tan(math.radians(1.0)),
+            "yaw_available": yaw_drift_deg is not None,
         },
         "dominant_term": None,
         "note": "steady = offset of the fitted line at t=0; drift = fitted line movement over the "

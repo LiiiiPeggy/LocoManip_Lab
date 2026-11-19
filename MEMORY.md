@@ -787,3 +787,22 @@ gripper base and the lidar are **not closed**, so their containment is unknown r
   while the residual (de-trended) jitter is only 1.2 / 6.0 / 7.3 px. At hold start the aim is
   15.1 / 8.1 / 15.9 px, so the camera mount is fine (4.82 mm self-consistency, 0.38-0.93 deg
   axis error); the blocker for a fixed-view observation baseline is station-keeping, not optics.
+- **Yaw about the base origin moves the D455 image far more than 6.5 px/deg (2026-11-20).**
+  The camera sits ~1.07 m from the base origin in the chassis frame, so a 1.69 deg yaw moves it
+  ~31.6 mm laterally (33 px at 0.35 m) and adds ~11 px from the view rotating, i.e. ~43 px. A
+  four-way reprojection of the fixed target confirms it: of the 46.27 px first-second slide in
+  the `top` view, chassis rotation gives 43.34 px, chassis translation 6.86 px, arm-relative
+  motion 2.08 px, interaction 0.34 px, residual 2.06 px. Do not apply the 1.06 px/mm or
+  6.5 px/deg scales to yaw about the base origin; they hold only for translation perpendicular
+  to the optical axis.
+- **The D455 projection reproduces the detected motion to ~2 px, with a constant cube bias
+  (2026-11-20).** Detected-minus-projected displacement over 60 hold frames has RMS 2.18 px and
+  max 2.62 px, no growth with time, so frame sync and the mount chain are consistent. The
+  projected 3D cube centre sits a constant 17.5 px (du -8.56, dv +15.23) from the detected
+  silhouette centroid; compare displacements, and budget that offset if an absolute-position
+  threshold is used.
+- **A missing pose field must never default to zero (2026-11-20).** A1's `hold_records` predate
+  `base_yaw_deg`; reading it with `.get(..., 0.0)` produced a "measured" 0.0 deg yaw drift in
+  `d455_offset_decomposition.json`. The analyzer now emits null plus `yaw_available: false`.
+  Any A1 yaw statement must come from the detailed re-run (`--detail-view`), which records the
+  chassis quaternion per frame.

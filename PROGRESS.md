@@ -1151,6 +1151,35 @@ Artifacts (each verified by loading/playing it back, not by exit code):
    VLN observation baseline; do not relax the 20 px threshold. Evidence:
    `outputs/stage413/b/d455_views*/`; plan §48.
 
+   **D455 short-window re-reading and the source of the top-view slide (2026-11-20).** Two
+   offline additions to section 48, no new training. (a) The existing hold records were re-sliced
+   into fixed prefixes (1 s = 10 frames, 2 s = 20) with the pre-registered thresholds; A1 has no
+   passing view at any window (front 31.8/32.9/33.7 px mean, side 11.6/21.5/30.4 with std(u)
+   9.71/14.98/11.62, top 63.8/71.6/90.8), while A2's front passes only at 1 s (19.4 px, std
+   3.14/0.80) and is 20.4 px at 2 s, i.e. a fail. Front in A1 enters already 26.1 px off centre,
+   side enters aligned (8.1 px) and slides at about 42 px/s, top does both. Independent
+   recomputation by four workflow agents reproduced every cell and found no discrepancy; the
+   critique caught two real problems in the earlier prose: the 60/40 "chassis explains it"
+   figure was an order-of-magnitude projection presented as an apportionment, and A1's yaw
+   column was a `0.0` default rather than a measurement. Both are now fixed: the analyzer emits
+   `null` when `base_yaw_deg` is absent (regenerated all three decompositions). (b) A detailed
+   re-run of the same seed and view order recorded per-frame chassis pose, D455 optical-frame
+   pose and target pose for `top` only. It reproduces A1 to 0.03 px, confirms no marker re-place
+   (`marker_replaces_in_hold = 0`, target world pose unchanged), and separates the arrival
+   decision (step 6) from the first hold frame (step 7). Four-way reprojection of the fixed
+   target: of the detected 46.27 px first-second motion, rotation about the chassis origin
+   accounts for 43.34 px (dyaw -1.69 deg in the first second, -2.53 deg at 6 s, with the camera
+   on a ~1.07 m lever), chassis translation 6.86 px, camera-relative-to-chassis (arm) 2.08 px,
+   interaction 0.34 px; residual 2.06 px. Over 6 s the same split is 61.27 / 9.57 / 2.10 / 0.47
+   with a 2.29 px residual. The projection matches the detection frame by frame (RMS 2.18 px,
+   max 2.62 px over 60 frames), and the cube's 3D centre sits a constant 17.5 px from its
+   silhouette centroid. **Priority: chassis yaw hold after arrival, not the camera mount or the
+   arm.** The earlier 1.06 px/mm and 6.5 px/deg scales are valid only for translation
+   perpendicular to the optical axis; yaw about the base origin is ~3x stronger here. Next step
+   is an isolated yaw-hold test under a zero velocity command; `side` stays deferred. Evidence:
+   `outputs/stage413/b/d455_views_detail/`, `d455_views/d455_short_windows.json`; plan
+   §48.7-48.9.
+
 ## Known minor documentation drift (verify before editing docs)
 
 Recorded because it misleads edits; neither item changes runtime behavior.

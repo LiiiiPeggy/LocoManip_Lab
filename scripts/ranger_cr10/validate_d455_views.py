@@ -72,6 +72,14 @@ ap.add_argument(
          "re-registered at the first hold frame, which isolates aim accuracy plus jitter from "
          "the chassis drift that happened before the hold started.",
 )
+ap.add_argument(
+    "--detail-view",
+    default="",
+    help="Name of one view (e.g. 'top') for which every hold frame also records the base world "
+         "pose, the D455 optical-frame world pose, the target's actual world pose, the detected "
+         "centroid and the projection of the target centre with the measured camera. Every view "
+         "is still executed, so the reset/command random sequence matches the default order.",
+)
 args = ap.parse_args()
 
 app = AppLauncher(headless=True, enable_cameras=True).app
@@ -564,6 +572,9 @@ results = {
     "views": {},
 }
 
+detail_records: list[dict] = []
+detail_intrinsics = None
+
 for name in SELECTED:
     geom = GEOMETRY[name]
     _current["pos"] = torch.tensor(geom["tcp_pos_b"], dtype=torch.float32)
@@ -652,6 +663,40 @@ for name in SELECTED:
                 f"proj_expected={project_point(cp, cq, intr, expected_marker_world)}",
                 flush=True,
             )
+
+        if name == args.detail_view:
+            # Full pose record for one view only, so the motion can be reproduced offline:
+            # the target is fixed in the world, the chassis moves, and the camera moves relative
+            # to the chassis because the arm moves. Everything needed to recompose those four
+            # cases is captured here, at the same instant as the rendered frame.
+            intr = camera.data.intrinsic_matrices[0].detach().cpu().numpy()
+            cam_w_pos, cam_w_quat = camera_pose_w_ros()
+            target_w = marker_world(name)
+            base_w_pos, base_w_quat = base_pose()
+            detail_records.append({
+                "hold_index": int(hold_idx),
+                "steps_since_reset": int(steps),
+                "arrival_step": arrival_step,
+                "sim_time_s": float(getattr(u.sim, "current_time", steps * u.step_dt)),
+                "base_pos_w": base_w_pos.tolist(),
+                "base_quat_w": base_w_quat.tolist(),
+                "cam_pos_w": cam_w_pos.tolist(),
+                "cam_quat_w_ros": cam_w_quat.tolist(),
+                "target_pos_w": target_w.tolist(),
+                "target_registered_w": expected_marker_world.tolist(),
+                "u": det["u"],
+                "v": det["v"],
+                "du": None if det["u"] is None else float(det["u"] - IMG_W / 2.0),
+                "dv": None if det["v"] is None else float(det["v"] - IMG_H / 2.0),
+                "pixels": det["count"],
+                "extent_px": det["extent_px"],
+                "visible": bool(
+                    det["count"] >= MIN_VISIBLE_PIXELS and det["extent_px"] is not None
+                    and det["extent_px"] < 0.5 * IMG_W
+                ),
+                "projected_center_uv": project_point(cam_w_pos, cam_w_quat, intr, target_w),
+            })
+            detail_intrinsics = intr.tolist()
 
         link6_w = robot.data.body_pos_w[0, anchor_id].detach().cpu().numpy()
         link6_q = robot.data.body_quat_w[0, anchor_id].detach().cpu().numpy()
@@ -757,6 +802,24 @@ with open(os.path.join(OUT_DIR, "d455_view_results.json"), "w") as handle:
     json.dump(results, handle, indent=1)
 print(json.dumps(results["summary"], indent=1), flush=True)
 print(f"wrote {os.path.join(OUT_DIR, 'd455_view_results.json')}", flush=True)
+
+if detail_records:
+    detail = {
+        "view": args.detail_view,
+        "marker_mode": args.marker_mode,
+        "control_dt_s": float(u.step_dt),
+        "intrinsics": detail_intrinsics,
+        "image_wh": [IMG_W, IMG_H],
+        "arrival_rule": "arrival is decided after stepping and checking the pose; the first hold "
+                        "frame is read one control step later",
+        "arrival_step": results["views"][args.detail_view]["arrival_step"],
+        "first_hold_frame_step": detail_records[0]["steps_since_reset"],
+        "records": detail_records,
+    }
+    path = os.path.join(OUT_DIR, f"d455_detail_{args.detail_view}.json")
+    with open(path, "w") as handle:
+        json.dump(detail, handle, indent=1)
+    print(f"wrote {path}", flush=True)
 sys.stdout.flush()
 sys.stderr.flush()
 os._exit(0)
