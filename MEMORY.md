@@ -753,4 +753,37 @@ gripper base and the lidar are **not closed**, so their containment is unknown r
   endpoint is unreachable from this machine (EOF on `objects/batch`), so `models/**/*.pt` carries
   an explicit `-filter -diff -merge -text` rule in `.gitattributes` (after the `*.pt` rule) and
   `^models/` is excluded from `check-added-large-files`. Loaders read `params/agent.yaml` next to
-  the checkpoint, so the published layout needs no loader change.
+  the checkpoint, so the published layout needs no loader change. The remote tag fetch was
+  checksum-verified by the user; the load test ran on the local published copy, not on the fetched
+  one.
+- **The sim has no D455 camera sensor; the mount chain is in the v2 URDF (2026-11-19).** The D455
+  appears only as a collision box merged into `cr10_Link6`. To observe from it, attach a
+  `CameraCfg` under `Robot/cr10_Link6` with `convention="ros"` and the chain
+  `cr10_Link6 ->(identity) gripper_base_link ->(d455_joint xyz 0 0.10 0.14, rpy 0.785398
+  -1.570796 -2.356194) d455_link ->(d455_color_joint xyz 0 -0.059 0) d455_color_frame
+  ->(rpy -pi/2 0 -pi/2) d455_color_optical_frame`. Sanity check: at the default pose that optical
+  axis must be within ~1 deg of base +X (plan §20.5 measured 0.87 deg). Note `PinholeCameraCfg`
+  values go straight into the USD attributes, so `f_px = width * focal_length /
+  horizontal_aperture` holds for any consistent unit; `lock_camera=False` for a link-mounted
+  camera.
+- **Cross-environment deltas: keep the increment and the absolute error apart (2026-11-19).**
+  The decision quantity is the **increment** of a policy over the same environment's model_9999,
+  compared across environments (<=0.02 mm / 0.006 mrad). The absolute hold error also matches
+  across assets but only to 0.036 mm / 0.085 mrad; quoting one number for both overstates the
+  agreement.
+- **A runtime xform write on a prim with RigidBodyAPI is undone every step (2026-11-19).**
+  A marker spawned through `AssetBaseCfg` with `rigid_props` gets PhysX as the transform owner;
+  `XformPrimView.set_world_poses` appears to work (the readback right after the write is correct)
+  but the next `step()` restores the init pose. For a visual-only marker pass
+  `rigid_props=None` and `collision_props=None`, and set `_sync_usd_on_fabric_write = True` so the
+  fabric write also reaches USD and the RTX renderer.
+- **Colour detection in a lit scene must use channel dominance, not distance to the albedo
+  (2026-11-19).** A Lambertian cube with albedo (1,0,0) renders far darker than 255; an
+  Euclidean-distance match to the nominal colour misses a correctly placed target. Use
+  `channel > 50 and channel > 1.6 * max(other two)`.
+- **The D455 view drifts because the chassis does not hold station (2026-11-19).** With a zero
+  velocity command the base still yaws 0.25 / 3.15 / 2.53 deg and translates 4.8 / 16.2 / 12.2 mm
+  over a 6 s hold, so a target 0.35 m in front slides 9.5 / 59.2 / 74.4 px across the D455 image
+  while the residual (de-trended) jitter is only 1.2 / 6.0 / 7.3 px. At hold start the aim is
+  15.1 / 8.1 / 15.9 px, so the camera mount is fine (4.82 mm self-consistency, 0.38-0.93 deg
+  axis error); the blocker for a fixed-view observation baseline is station-keeping, not optics.

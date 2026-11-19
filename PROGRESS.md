@@ -1106,10 +1106,50 @@ Artifacts (each verified by loading/playing it back, not by exit code):
    **The tracking degradation is environment-independent**, so the §46.6 physics confounder is
    excluded and the branch is closed: adopt `model_9999` + v2 as the simulation baseline for the
    fixed-gripper / D455 observation validation. Cleanup: measured `logs/` 1.3 GB and `outputs/`
-   473 MB, found the largest items are evidence and kept them; deleted 14 unreferenced interface
-   smoke/diagnostic run dirs (~75 MB) and one temporary wrapper script; left
+   473 MB, found the largest items are evidence and kept them; deleted 15 unreferenced interface
+   smoke/diagnostic run dirs (~75 MB; run dirs 75 -> 60) and two temporary wrapper scripts; left
    `2026-10-29_20-04-13_stage45j_hy_test` (5.0 MB) in place as purpose-unclear for the user to
    decide. Evidence: `outputs/stage413/b/cross_env/cross_env_table.json`; plan §47.
+
+   **§47 wording corrections and the D455 fixed-view protocol (2026-11-19).** Corrected three
+   §47 statements without re-running anything: (a) the remote tag fetch's SHA-256 check and the
+   local-copy load test are now recorded separately, with the note that `params/agent.yaml` is
+   needed only by the script loaders, not by `OnPolicyRunner.load()`; (b) the cross-environment
+   claim now separates the **increment** difference (<=0.02 mm / 0.006 mrad, the decision
+   quantity) from the **absolute-error** difference (<=0.036 mm / 0.085 mrad, also small but
+   larger, previously conflated with the increment); (c) the cleanup count is 15 directories and
+   ~75 MB, not 14 / 61 MB, with two temporary scripts removed and run dirs going 75 -> 60.
+   Prepared, but did **not** execute, the D455 fixed-view observation check: the sim has no camera
+   sensor (the D455 exists only as a collision box), so the new script adds an in-memory RGB
+   camera on the v2 URDF's `d455_color_optical_frame` (Link6 -> gripper_base_link -> d455_link ->
+   d455_color_frame -> optical; ros convention), 640x480 with f = 372 px, plus three temporary
+   0.06 m markers placed on each view's expected optical axis at 0.35 m. Views (front / side /
+   top) and all acceptance thresholds were fixed before any run (plan §48). **No per-view result
+   table exists**: the session's command channel refuses all execution (auto-mode safety check
+   unavailable), so Isaac and Python could not start; the script is untested and may need one or
+   two API fixes on first run. Nothing was committed for this entry.
+
+   **D455 fixed-view observation executed (2026-11-19).** Three implementation bugs fixed without
+   changing the protocol: `AssetBaseCfg` resolves to `XformPrimView` here (use `set_world_poses`
+   plus `_sync_usd_on_fabric_write`); a marker with `rigid_props` has its transform pushed back
+   to the init pose every step by PhysX (visual-only markers now); and colour matching by
+   distance to the nominal RGB missed a correctly placed marker under scene lighting (switched to
+   channel dominance). Mount self-check: a probe on the measured optical axis images at
+   (321, 240) with a 71 px extent, the mount-chain **predicted** axis lands at (321, 238), and the
+   reversed probe is absent — the chain and the `convention="ros"` conversion are correct.
+   Results with `model_9999`, 1 env, 6-step arrival, 60-frame hold: target visible 60/60 in all
+   three views; EE position error 16.5 / 11.3 / 8.3 mm; camera axis error 0.60 / 0.93 / 0.38 deg;
+   mount self-consistency 4.82 mm; 0 terminations, 0 contacts, 0 NaN. Pre-registered pixel
+   criterion **fails**: mean offset 33.7 / 30.4 / 90.8 px (A1, world-fixed target) and
+   21.1 / 56.9 / 71.6 px (A2, target re-registered at hold start). Decomposition: at hold start
+   the aim is 15.1 / 8.1 / 15.9 px and residual jitter is 1.2 / 6.0 / 7.3 px, while the target
+   moves 9.5 / 59.2 / 74.4 px across the 6 s window; base yaw drift is 0.25 / 3.15 / 2.53 deg and
+   base translation 4.8 / 16.2 / 12.2 mm, which at 0.35 m predicts most of it. So the failure is
+   **station-keeping during the hold, not the camera**: the arm holds the pose but the chassis
+   yaws and translates, and the view slides. Recommendation: re-test with a 1-2 s window and
+   measure base yaw/position hold error under a zero velocity command before adopting this as the
+   VLN observation baseline; do not relax the 20 px threshold. Evidence:
+   `outputs/stage413/b/d455_views*/`; plan §48.
 
 ## Known minor documentation drift (verify before editing docs)
 
