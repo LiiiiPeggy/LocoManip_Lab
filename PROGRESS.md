@@ -1210,3 +1210,20 @@ Recorded because it misleads edits; neither item changes runtime behavior.
   7 platforms.
 - `PROJECT_INTRO.md` §5.5 lists a reward term `arm_torques_max` (−5e-5), but the completed runs log
   `Episode_Reward/arm_deviation` and no `arm_torques_max` tag exists in any run.
+
+   **Three-view D455 baseline reached with the deployment filter (2026-11-21).** `front` and
+   `side` were re-paired against `model_9999` + v2 + `--deploy-filter`, each on its own A1 world
+   target from the earlier OFF run, with a shared preset marker orientation (identity) because the
+   old records did not store the cube quaternion; `--marker-world` now selects the target by view
+   name and fails loudly when the view is missing, and records the read-back position and world
+   quaternion. Both arms start from the recorded historical resets (`front` `d495e2bc22`, `side`
+   `a8be113ac9`). With the filter every view arrives at step 6 with 60/60 visible and passes all
+   three windows: `front` 1 s 9.0 px (std 0.87/2.16), 6 s 5.5 (2.35/1.62); `side` 1 s 17.2
+   (3.13/0.95), 6 s **19.8** (1.78/0.66); `top` 1 s 15.4 (1.42/3.18), 6 s 7.7 (3.41/3.46).
+   First-second image displacement is 7.2/10.2/9.6 px, against 8.3/33.9/46.3 unfiltered. This
+   configuration is now the **measured three-view simulation observation baseline**; the
+   fixed-view observation round is closed. Known margin, kept for later: `side`'s six-second mean
+   is 0.2 px under the 20 px limit and slowly grows (17.2 -> 18.7 -> 19.8), passing on spread
+   rather than on centring; the 9.6-16.2 px entry offsets are aiming errors, not drift; 24-33 mm
+   of chassis translation remains. Evidence: `outputs/stage413/b/d455_fs_{off,on}/`,
+   `d455_three_views_summary.json`; plan §48.11.

@@ -826,3 +826,15 @@ gripper base and the lidar are **not closed**, so their containment is unknown r
   `marker_registered_world` from the baseline run and pass it with `--marker-world`; record a
   per-view `initial_state` (base pose, joint-position digest) to prove both runs started
   identically.
+- **A paired closed-loop comparison must share the marker's full pose, not just its position
+  (2026-11-21).** A cube's silhouette depends on its orientation, so two runs that place the
+  target at the same point but with different world quaternions are not comparable. Record the
+  read-back position and quaternion (`marker_registered_quat`), pass both through
+  `--marker-world`, and when an older run has no recorded orientation re-collect the *pair* with
+  a shared preset orientation instead of pairing against the old one.
+- **The three-view D455 observation baseline is `model_9999` + v2 + the deploy filter
+  (2026-11-21).** With `vx_deadband=0.02`, `wz_deadband=0.02`, `lock_output=true`,
+  `hysteresis=0`, all three views arrive at step 6, stay visible 60/60 and pass the 1/2/6 s
+  criteria (mean <= 20 px, std <= 5 px): `front` 9.0/6.9/5.5, `side` 17.2/18.7/19.8, `top`
+  15.4/12.8/7.7. `side` clears the six-second mean by only 0.2 px and drifts outward slowly, so a
+  future change that lengthens the hold or perturbs the chassis should re-check `side` first.

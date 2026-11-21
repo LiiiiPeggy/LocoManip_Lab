@@ -460,28 +460,44 @@ def _set_marker_pose(marker, position_np, orientation_np):
         raise RuntimeError("marker asset exposes neither set_world_poses nor write_root_pose_to_sim")
 
 
-fixed_marker_world = None
-fixed_marker_source = None
+# -- reusable world targets, one per view ------------------------------------------
+# Two input shapes are accepted:
+#   * a previous run's result JSON: {"views": {name: {"marker_registered_world": [x, y, z]}}}
+#     -> position only; the marker keeps the chassis orientation at placement time
+#   * a preset: {"targets": {name: {"pos": [...], "quat": [w, x, y, z]}}} or {name: [...]}
+#     -> position and orientation; a cube's silhouette depends on its orientation, so a paired
+#        comparison between two runs must use the same quaternion, not each run's chassis attitude.
+# The active view is looked up by name; a missing view is a hard error, never a silent fallback
+# to another view's target.
+preset_targets: dict[str, tuple[np.ndarray, np.ndarray | None]] = {}
+preset_source = None
 if args.marker_world:
     _mw_path = Path(args.marker_world) if Path(args.marker_world).is_absolute() else Path(ROOT) / args.marker_world
     _mw = json.loads(_mw_path.read_text())
+    preset_source = str(_mw_path)
+    if isinstance(_mw, dict) and "targets" in _mw:
+        for _name, _spec in _mw["targets"].items():
+            if isinstance(_spec, dict):
+                preset_targets[_name] = (np.array(_spec["pos"], dtype=float),
+                                         None if _spec.get("quat") is None else np.array(_spec["quat"], dtype=float))
+            else:
+                preset_targets[_name] = (np.array(_spec, dtype=float), None)
+    elif isinstance(_mw, dict) and "views" in _mw:
+        for _name, _view in _mw["views"].items():
+            for _key in ("marker_registered_world", "marker_pos_world_at_last_hold",
+                         "expected_marker_pos_world_at_reset"):
+                if _view.get(_key):
+                    preset_targets[_name] = (np.array(_view[_key], dtype=float), None)
+                    break
+    else:
+        raise SystemExit(f"{_mw_path}: expected a results JSON with 'views' or a preset with 'targets'")
+    if not preset_targets:
+        raise SystemExit(f"{_mw_path}: no per-view target found")
+    print(f"[target] loaded {sorted(preset_targets)} from {preset_source}", flush=True)
 
-    def _extract_world(doc):
-        if isinstance(doc, dict) and "views" in doc:
-            view = doc["views"].get("top") or next(iter(doc["views"].values()))
-            for key in ("marker_registered_world", "marker_pos_world_at_last_hold",
-                        "expected_marker_pos_world_at_reset"):
-                if view.get(key):
-                    return view[key], key
-        for key in ("target_world", "marker_registered_world"):
-            if isinstance(doc, dict) and doc.get(key):
-                return doc[key], key
-        raise SystemExit(f"no target world pose in {_mw_path}")
-
-    _pose, fixed_marker_source = _extract_world(_mw)
-    fixed_marker_world = np.array(_pose, dtype=float)
-    print(f"[target] reusing world pose from {_mw_path} ({fixed_marker_source}): "
-          f"{np.round(fixed_marker_world, 4).tolist()}", flush=True)
+# Per-view lookups resolved at the start of each view.
+fixed_marker_world = None
+fixed_marker_quat = None
 
 
 def place_markers(active: str):
@@ -497,15 +513,18 @@ def place_markers(active: str):
         if name == active:
             if fixed_marker_world is not None:
                 world_pos = fixed_marker_world
+                world_quat = base_quat if fixed_marker_quat is None else fixed_marker_quat
             else:
                 world_pos = base_pos + quat_rotate(base_quat, np.array(geom["marker_pos_b"]))
+                world_quat = base_quat
         else:
             world_pos = base_pos + np.array([0.0, 0.0, -100.0])
-        _set_marker_pose(markers[name], world_pos, base_quat)
+            world_quat = base_quat
+        _set_marker_pose(markers[name], world_pos, world_quat)
         readback = marker_world(name)
         print(
             f"[place] {name}: target={np.round(world_pos, 3).tolist()} "
-            f"readback={np.round(readback, 3).tolist()}",
+            f"quat={np.round(world_quat, 4).tolist()} readback={np.round(readback, 3).tolist()}",
             flush=True,
         )
 
@@ -808,6 +827,7 @@ for name in SELECTED:
     marker_replaces = 0
     wz_state["suppress"] = False          # do not leak the post-arrival switch across views
     marker_registered_world = None
+    marker_registered_quat = None
 
     yaw_records_allowed[0] = bool(args.detail_view) and name == args.detail_view and args.yaw_log
 
@@ -826,6 +846,17 @@ for name in SELECTED:
     }
 
     target_mark = ""
+    # Resolve this view's preset before anything is placed: a missing view must fail here, not
+    # silently fall back to another view's target.
+    if args.marker_world:
+        if name not in preset_targets:
+            raise SystemExit(
+                f"--marker-world {preset_source} has no target for view '{name}'; "
+                f"available views: {sorted(preset_targets)}"
+            )
+        fixed_marker_world, fixed_marker_quat = preset_targets[name]
+        fixed_marker_world = np.array(fixed_marker_world, dtype=float)
+
     for _warm in range(WARMUP_STEPS):
         obs = policy_step(obs)
         steps += 1
@@ -843,8 +874,12 @@ for name in SELECTED:
                 expected_marker_world = base_pos + quat_rotate(base_quat, np.array(geom["marker_pos_b"]))
                 target_mark = "registered-from-chassis"
             place_markers(name)
-            marker_registered_world = np.array(expected_marker_world, dtype=float)
-            print(f"[view {name}] target {target_mark} at {np.round(marker_registered_world, 4).tolist()}",
+            marker_registered_world = np.array(marker_world(name), dtype=float)
+            marker_registered_quat = (
+                base_quat if (fixed_marker_world is None or fixed_marker_quat is None) else fixed_marker_quat
+            )
+            print(f"[view {name}] target {target_mark} at {np.round(marker_registered_world, 4).tolist()} "
+                  f"quat={np.round(marker_registered_quat, 4).tolist()}",
                   flush=True)
         if yaw_records_allowed[0]:
             tcp_pos_now, _ = tcp_pose_b(robot, anchor_id, base_id)
@@ -1003,6 +1038,7 @@ for name in SELECTED:
         "marker_pos_world_at_last_hold": marker_world(name).tolist(),
         "marker_registered_world": None if marker_registered_world is None else marker_registered_world.tolist(),
         "marker_registration": "reused-from-file" if fixed_marker_world is not None else "registered-from-chassis",
+        "marker_registered_quat": None if marker_registered_quat is None else [float(v) for v in marker_registered_quat],
         "initial_state": view_initial_state,
         "marker_replaces_in_hold": marker_replaces,
         "arrival_step": arrival_step,
