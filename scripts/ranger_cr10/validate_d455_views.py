@@ -80,6 +80,21 @@ ap.add_argument(
          "centroid and the projection of the target centre with the measured camera. Every view "
          "is still executed, so the reset/command random sequence matches the default order.",
 )
+ap.add_argument(
+    "--yaw-log",
+    action="store_true",
+    help="For --detail-view, also record the command-to-motion chain every step from the warmup "
+         "onwards: upper velocity command, raw base action, the action term's post-tanh command, "
+         "the post-branch (vx, wz), steering and wheel targets, wheel speeds, base yaw and yaw "
+         "rate, EE tracking error and the detected centroid.",
+)
+ap.add_argument(
+    "--zero-wz-after-arrival",
+    action="store_true",
+    help="Intervention: from the control step after the arrival decision, zero only the wz that "
+         "reaches the base controller, leaving vx and the six arm joints under normal policy "
+         "control. The chassis is not locked.",
+)
 args = ap.parse_args()
 
 app = AppLauncher(headless=True, enable_cameras=True).app
@@ -574,6 +589,72 @@ results = {
 
 detail_records: list[dict] = []
 detail_intrinsics = None
+yaw_records: list[dict] = []
+
+# -- command-to-motion chain access ------------------------------------------------
+base_term = u.action_manager.get_term("base_vel")
+base_cfg = base_term.cfg
+wz_state = {"suppress": False, "wz_at_suppression": None}
+_original_apply = base_term.apply_actions
+
+
+def _apply_with_optional_wz_zero():
+    """Optionally zero only the wz that reaches the base controller.
+
+    ``apply_actions`` reads the post-tanh command and converts (vx, wz) into steering and wheel
+    targets, so zeroing the second component here removes the turn request while leaving vx and
+    every arm joint command untouched. The chassis stays under physics, not locked.
+    """
+    wz_state["wz_at_suppression"] = float(base_term._command[0, 1].item())
+    if wz_state["suppress"]:
+        base_term._command[:, 1] = 0.0
+    _original_apply()
+
+
+base_term.apply_actions = _apply_with_optional_wz_zero
+
+
+def record_chain(phase: str, steps_now: int, action_tensor, det, pos_err: float) -> None:
+    """One row of the command-to-motion chain, for the detail view only."""
+    if not args.yaw_log or not yaw_records_allowed[0]:
+        return
+    bp, bq = base_pose()
+    yaw = math.degrees(math.atan2(*(quat_rotate(bq, np.array([1.0, 0.0, 0.0]))[[1, 0]])))
+    ang = getattr(robot.data, "root_ang_vel_w", None)
+    if ang is None:
+        ang = robot.data.body_ang_vel_w[:, base_id]
+    vel = u.command_manager.get_term("base_velocity")
+    cmd = base_term._command[0].detach().cpu().numpy()
+    vx, wz = float(cmd[0]), float(cmd[1])
+    abs_wz = abs(wz)
+    radius = (abs(vx) / abs_wz) if abs_wz > 1e-4 else 1e6
+    spinning = abs_wz > 1e-4 and (radius < float(base_cfg.min_turn_radius) or abs(vx) < 1e-3)
+    if spinning:
+        wz = float(np.clip(wz, -float(base_cfg.max_spin_rate), float(base_cfg.max_spin_rate)))
+        vx = 0.0
+    yaw_records.append({
+        "phase": phase,
+        "steps_since_reset": int(steps_now),
+        "sim_time_s": float(getattr(u.sim, "current_time", steps_now * u.step_dt)),
+        "upper_cmd_vx_wz": [float(v) for v in vel.vel_command_b[0].detach().cpu().numpy()[:2]],
+        "upper_cmd_standing": bool(vel.is_standing_env[0].item()),
+        "action_base_raw": [float(action_tensor[0, 0]), float(action_tensor[0, 1])],
+        "term_command_vx_wz": [float(cmd[0]), float(cmd[1])],
+        "term_command_after_spin": [float(vx), float(wz)],
+        "wz_zeroed": bool(wz_state["suppress"]),
+        "steering_target": [float(v) for v in base_term._steering_target[0].detach().cpu().numpy()],
+        "wheel_target": [float(v) for v in base_term._wheel_target[0].detach().cpu().numpy()],
+        "steering_actual": [float(v) for v in robot.data.joint_pos[0, base_term._steering_ids].detach().cpu().numpy()],
+        "wheel_actual": [float(v) for v in robot.data.joint_vel[0, base_term._wheel_ids].detach().cpu().numpy()],
+        "base_yaw_deg": yaw,
+        "base_yaw_rate_dps": float(ang[0].item() * 180.0 / math.pi),
+        "ee_pos_err_m": float(pos_err),
+        "u": det.get("u"),
+        "v": det.get("v"),
+    })
+
+
+yaw_records_allowed = [False]
 
 for name in SELECTED:
     geom = GEOMETRY[name]
@@ -594,6 +675,8 @@ for name in SELECTED:
     steps = 0
     marker_replaces = 0
 
+    yaw_records_allowed[0] = bool(args.detail_view) and name == args.detail_view and args.yaw_log
+
     for _warm in range(WARMUP_STEPS):
         with torch.no_grad():
             action = policy(obs)
@@ -608,6 +691,13 @@ for name in SELECTED:
             base_pos, base_quat = base_pose()
             expected_marker_world = base_pos + quat_rotate(base_quat, np.array(geom["marker_pos_b"]))
             place_markers(name)
+        if yaw_records_allowed[0]:
+            tcp_pos_now, _ = tcp_pose_b(robot, anchor_id, base_id)
+            record_chain(
+                "warmup", steps, action,
+                detect(read_frame(), geom["marker_color"]),
+                float(torch.linalg.norm(tcp_pos_now[0] - torch.tensor(geom["tcp_pos_b"], device=u.device)).item()),
+            )
 
     while steps < WARMUP_STEPS + ARRIVAL_TIMEOUT:
         with torch.no_grad():
@@ -618,6 +708,8 @@ for name in SELECTED:
         pos_err = float(torch.linalg.norm(tcp_pos[0] - torch.tensor(geom["tcp_pos_b"], device=u.device)).item())
         q_cur = tcp_quat[0].detach().cpu().numpy()
         ori_err = 2.0 * math.acos(min(1.0, abs(float(np.dot(q_cur, np.array(geom["tcp_quat_b"]))))))
+        if yaw_records_allowed[0]:
+            record_chain("arrival", steps, action, detect(read_frame(), geom["marker_color"]), pos_err)
         if pos_err <= POS_TOL and ori_err <= ORI_TOL:
             arrival_step = steps
             break
@@ -633,6 +725,12 @@ for name in SELECTED:
         base_pos_at_reset = base_pos_now.copy()
         print(f"[view {name}] marker re-registered at hold start (diagnostic mode)", flush=True)
 
+    if args.zero_wz_after_arrival and arrival_step is not None:
+        # Intervention starts at the control step after the arrival decision, i.e. the first hold
+        # step. Only wz is removed; vx and the six arm joints keep their normal policy commands.
+        wz_state["suppress"] = True
+        print(f"[view {name}] wz suppressed from the first hold step", flush=True)
+
     for hold_idx in range(HOLD_STEPS if arrival_step is not None else 0):
         with torch.no_grad():
             action = policy(obs)
@@ -646,6 +744,8 @@ for name in SELECTED:
         ori_err = 2.0 * math.acos(min(1.0, abs(float(np.dot(q_cur, np.array(geom["tcp_quat_b"]))))))
         cam_pos_b, cam_quat_b, cam_pos_w = camera_pose_b()
         axis_err = axis_angle_deg(cam_quat_b, np.array(geom["expected_camera_quat_b"]))
+        if yaw_records_allowed[0]:
+            record_chain("hold", steps, action, det, pos_err)
         if hold_idx == 0 and args.marker_mode == "world":
             drift = float(np.linalg.norm(marker_world(name) - expected_marker_world))
             if drift > 1e-3:
@@ -802,6 +902,28 @@ with open(os.path.join(OUT_DIR, "d455_view_results.json"), "w") as handle:
     json.dump(results, handle, indent=1)
 print(json.dumps(results["summary"], indent=1), flush=True)
 print(f"wrote {os.path.join(OUT_DIR, 'd455_view_results.json')}", flush=True)
+
+if yaw_records:
+    yaw_path = os.path.join(OUT_DIR, f"d455_yaw_chain_{args.detail_view}.json")
+    with open(yaw_path, "w") as handle:
+        json.dump({
+            "view": args.detail_view,
+            "control_dt_s": float(u.step_dt),
+            "wz_suppressed_after_arrival": bool(args.zero_wz_after_arrival),
+            "base_term_cfg": {
+                "clip": [list(v) for v in base_cfg.clip],
+                "max_spin_rate": float(base_cfg.max_spin_rate),
+                "min_turn_radius": float(base_cfg.min_turn_radius),
+                "max_steer_angle": float(base_cfg.max_steer_angle),
+                "wheel_radius": float(base_cfg.wheel_radius),
+            },
+            "columns": ["phase", "steps_since_reset", "sim_time_s", "upper_cmd_vx_wz",
+                        "action_base_raw", "term_command_vx_wz", "term_command_after_spin",
+                        "wz_zeroed", "steering_target", "wheel_target", "steering_actual",
+                        "wheel_actual", "base_yaw_deg", "base_yaw_rate_dps", "ee_pos_err_m", "u", "v"],
+            "records": yaw_records,
+        }, handle, indent=1)
+    print(f"wrote {yaw_path}", flush=True)
 
 if detail_records:
     detail = {
