@@ -1180,6 +1180,28 @@ Artifacts (each verified by loading/playing it back, not by exit code):
    `outputs/stage413/b/d455_views_detail/`, `d455_views/d455_short_windows.json`; plan
    §48.7-48.9.
 
+   **Deployment zero-velocity filter vs unfiltered, on the D455 top view (2026-11-21).** The
+   evaluation entry now has `--deploy-filter`, wired in the same order as
+   `ranger_cr10_deploy.py` (deadband the command -> policy observes the deadbanded value ->
+   `filter_action` -> sim step), reading `mujoco/deploy/deploy_mujoco/ranger_cr10/config.yaml`
+   (`vx_deadband=0.02`, `wz_deadband=0.02`, `lock_output=true`, `hysteresis=0`). Two closed-loop
+   frozen-inference runs share the same top reset state (base `[-0.389, 0.364, 0.407]`, joint
+   digest `1e690da2...`), the same zero upper command, and the same re-used target world pose
+   `[-1.1931, 1.4328, 0.769]`; the OFF arm reproduces the historical A1 readings (entry 31.74 px,
+   first-second image move 46.26 px, first-second yaw -1.689 deg, arrival step 6, visible
+   60/60). With the filter: first-second image move 46.26 -> 9.58 px (-79%), six-second
+   69.66 -> 14.52 px, first-second yaw -1.689 -> -0.002 deg, six-second -2.531 -> -0.336 deg;
+   the controller receives wz = 0 on all 60 hold steps (raw action peaks at 0.121 and is zeroed),
+   wheel and steering targets are exactly 0.0, and the six arm actions are bit-identical before
+   and after filtering. All three windows now pass the original criteria: 1 s mean 15.4 px with
+   std 1.42/3.18, 2 s 12.8 with 1.65/4.52, 6 s 7.7 with 3.41/3.46; EE tracking is unchanged
+   (8.3 -> 8.0 mm). The remaining limiter is the **entry aiming offset** (16.2 px at the first
+   hold frame, 81% of the 20 px budget at 1 s) rather than drift, so the single next step is to
+   reduce that initial aim, not to chase yaw. Residual noted, not explained: with wz locked the
+   chassis still translates ~20 mm (yaw only -0.34 deg/6 s) and one wheel reads 2.4 rad/s while
+   its velocity target is exactly 0.0 (the other three ~0.02). Evidence:
+   `outputs/stage413/b/d455_cmp_{off,on}/`, `filter_comparison.{json,png}`; plan §48.10.
+
 ## Known minor documentation drift (verify before editing docs)
 
 Recorded because it misleads edits; neither item changes runtime behavior.

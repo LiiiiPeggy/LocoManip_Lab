@@ -51,6 +51,7 @@ import json
 import math
 import os
 import sys
+from pathlib import Path
 
 import numpy as np
 import yaml
@@ -94,6 +95,28 @@ ap.add_argument(
     help="Intervention: from the control step after the arrival decision, zero only the wz that "
          "reaches the base controller, leaving vx and the six arm joints under normal policy "
          "control. The chassis is not locked.",
+)
+ap.add_argument(
+    "--deploy-filter",
+    action="store_true",
+    help="Evaluation-only switch for the deployment zero-velocity filter "
+         "(scripts/ranger_cr10/base_command_filter.py), used in the same order as "
+         "mujoco/deploy/deploy_mujoco/ranger_cr10/ranger_cr10_deploy.py: deadband the command, "
+         "let the policy observe the deadbanded value, then filter_action before the sim step. "
+         "Defaults to off, which is the unfiltered baseline.",
+)
+ap.add_argument(
+    "--filter-config",
+    default="mujoco/deploy/deploy_mujoco/ranger_cr10/config.yaml",
+    help="Deployment YAML whose 'filter' block is read; the effective values are written to the "
+         "result JSON. Relative paths resolve against the repository root.",
+)
+ap.add_argument(
+    "--marker-world",
+    default="",
+    help="JSON written by an earlier run: reuse that run's registered target world pose instead of "
+         "registering a new one from the current chassis pose. Needed because the filter changes "
+         "the chassis motion from the first step, which would otherwise move the A1 target.",
 )
 args = ap.parse_args()
 
@@ -366,7 +389,12 @@ def apply_current_command() -> None:
     ee.pose_command_b[:, :3] = _current["pos"].to(u.device)
     ee.pose_command_b[:, 3:] = _current["quat"].to(u.device)
     vel = u.command_manager.get_term("base_velocity")
-    vel.vel_command_b[:] = 0.0
+    # Deploy order: the policy observes the *deadbanded* chassis command, so write the filtered
+    # value here rather than a literal zero. With the operator command at exactly zero the value
+    # is zero either way, but the observation must come from the same path the filter uses.
+    vel.vel_command_b[:, 0] = filter_state["vx"]
+    vel.vel_command_b[:, 1] = 0.0
+    vel.vel_command_b[:, 2] = filter_state["wz"]
     vel.is_standing_env[:] = True
 
 
@@ -432,17 +460,45 @@ def _set_marker_pose(marker, position_np, orientation_np):
         raise RuntimeError("marker asset exposes neither set_world_poses nor write_root_pose_to_sim")
 
 
+fixed_marker_world = None
+fixed_marker_source = None
+if args.marker_world:
+    _mw_path = Path(args.marker_world) if Path(args.marker_world).is_absolute() else Path(ROOT) / args.marker_world
+    _mw = json.loads(_mw_path.read_text())
+
+    def _extract_world(doc):
+        if isinstance(doc, dict) and "views" in doc:
+            view = doc["views"].get("top") or next(iter(doc["views"].values()))
+            for key in ("marker_registered_world", "marker_pos_world_at_last_hold",
+                        "expected_marker_pos_world_at_reset"):
+                if view.get(key):
+                    return view[key], key
+        for key in ("target_world", "marker_registered_world"):
+            if isinstance(doc, dict) and doc.get(key):
+                return doc[key], key
+        raise SystemExit(f"no target world pose in {_mw_path}")
+
+    _pose, fixed_marker_source = _extract_world(_mw)
+    fixed_marker_world = np.array(_pose, dtype=float)
+    print(f"[target] reusing world pose from {_mw_path} ({fixed_marker_source}): "
+          f"{np.round(fixed_marker_world, 4).tolist()}", flush=True)
+
+
 def place_markers(active: str):
     """Place the active view's marker at base_pose * marker_pos_b and park the others far away.
 
-    The other views' markers would otherwise sit inside this view's field of view and could
-    occlude the target; parking them 100 m below the floor keeps them out of the frame without
-    deleting them.
+    With ``--marker-world`` the active marker is placed at the supplied world point instead, so
+    two runs that move the chassis differently still observe the same target. The other views'
+    markers would otherwise sit inside this view's field of view and could occlude the target;
+    parking them 100 m below the floor keeps them out of the frame without deleting them.
     """
     base_pos, base_quat = base_pose()
     for name, geom in GEOMETRY.items():
         if name == active:
-            world_pos = base_pos + quat_rotate(base_quat, np.array(geom["marker_pos_b"]))
+            if fixed_marker_world is not None:
+                world_pos = fixed_marker_world
+            else:
+                world_pos = base_pos + quat_rotate(base_quat, np.array(geom["marker_pos_b"]))
         else:
             world_pos = base_pos + np.array([0.0, 0.0, -100.0])
         _set_marker_pose(markers[name], world_pos, base_quat)
@@ -542,6 +598,55 @@ def save_frame(frame: np.ndarray, path: str) -> str:
 
 
 os.makedirs(OUT_DIR, exist_ok=True)
+# -- deployment zero-velocity filter (evaluation only, default off) -------------------
+deploy_filter = None
+filter_effective = {}
+if args.deploy_filter:
+    _cfg_path = Path(args.filter_config) if Path(args.filter_config).is_absolute() else Path(ROOT) / args.filter_config
+    _deploy_cfg = yaml.safe_load(_cfg_path.read_text())
+    _fcfg = _deploy_cfg["filter"]
+    sys.path.insert(0, str(Path(ROOT) / "scripts" / "ranger_cr10"))
+    from base_command_filter import BaseCommandFilter  # noqa: E402
+
+    deploy_filter = BaseCommandFilter(
+        vx_deadband=float(_fcfg["vx_deadband"]) if _fcfg.get("enabled", True) else 0.0,
+        wz_deadband=float(_fcfg["wz_deadband"]) if _fcfg.get("enabled", True) else 0.0,
+        lock_output=bool(_fcfg.get("lock_output", False)) and bool(_fcfg.get("enabled", True)),
+        hysteresis=float(_fcfg.get("hysteresis", 0.0)),
+    )
+    filter_effective = {
+        "config_file": str(_cfg_path),
+        "enabled_in_config": bool(_fcfg.get("enabled", False)),
+        "vx_deadband": deploy_filter.vx_deadband,
+        "wz_deadband": deploy_filter.wz_deadband,
+        "lock_output": deploy_filter.lock_output,
+        "hysteresis": deploy_filter.hysteresis,
+        "enabled": deploy_filter.enabled,
+        "call_order": "filter_command -> policy(obs with deadbanded command) -> filter_action -> env.step",
+    }
+
+# The upper velocity command is exactly zero in this evaluation, so the deadbanded value is also
+# zero; it is still computed through the deployment path so the log proves the path ran.
+filter_state = {"vx": 0.0, "wz": 0.0}
+last_step = {"raw": None, "used": None}
+
+
+def policy_step(obs_now):
+    """One control step in deployment order: deadband -> policy -> filter_action -> sim step."""
+    vx_t = torch.zeros(1, device=u.device)
+    wz_t = torch.zeros(1, device=u.device)
+    if deploy_filter is not None:
+        vx_t, wz_t = deploy_filter.filter_command(vx_t, wz_t)
+        filter_state["vx"] = float(vx_t[0].item())
+        filter_state["wz"] = float(wz_t[0].item())
+    with torch.no_grad():
+        raw = policy(obs_now)
+        used = raw if deploy_filter is None else deploy_filter.filter_action(raw, vx_t, wz_t)
+        obs_next, _rew, _done, _extra = wrapper.step(used)
+    last_step["raw"] = raw
+    last_step["used"] = used
+    return obs_next
+
 results = {
     "checkpoint": CKPT,
     "checkpoint_sha256": hashlib.sha256(open(CKPT, "rb").read()).hexdigest(),
@@ -583,6 +688,7 @@ results = {
         "marker_mode": args.marker_mode,
         "marker_mode_note": "world = pre-registered protocol (fixed world target); hold = diagnostic "
                             "re-registration at the first hold frame",
+        "deploy_filter": filter_effective if deploy_filter is not None else {"enabled": False},
     },
     "views": {},
 }
@@ -614,16 +720,24 @@ def _apply_with_optional_wz_zero():
 base_term.apply_actions = _apply_with_optional_wz_zero
 
 
-def record_chain(phase: str, steps_now: int, action_tensor, det, pos_err: float) -> None:
-    """One row of the command-to-motion chain, for the detail view only."""
+
+
+def record_chain(phase: str, steps_now: int, det, pos_err: float, target_marked: str = "") -> None:
+    """One row of the command-to-motion chain, for the detail view only.
+
+    The command the operator sends is ``[vx, vy, wz]``; vy is unused by this platform, so the
+    recorded pair is items 0 and 2. The chassis yaw rate is the world-frame Z component of the
+    ``base_link`` angular velocity, taken as a scalar *before* any conversion — the earlier
+    version indexed the batch and then called ``.item()`` on the remaining 3-vector, which raised
+    at the first recorded step.
+    """
     if not args.yaw_log or not yaw_records_allowed[0]:
         return
     bp, bq = base_pose()
     yaw = math.degrees(math.atan2(*(quat_rotate(bq, np.array([1.0, 0.0, 0.0]))[[1, 0]])))
-    ang = getattr(robot.data, "root_ang_vel_w", None)
-    if ang is None:
-        ang = robot.data.body_ang_vel_w[:, base_id]
+    yaw_rate_dps = float(robot.data.body_ang_vel_w[0, base_id, 2].item()) * 180.0 / math.pi
     vel = u.command_manager.get_term("base_velocity")
+    upper = vel.vel_command_b[0].detach().cpu().numpy()   # [vx, vy, wz]
     cmd = base_term._command[0].detach().cpu().numpy()
     vx, wz = float(cmd[0]), float(cmd[1])
     abs_wz = abs(wz)
@@ -632,22 +746,40 @@ def record_chain(phase: str, steps_now: int, action_tensor, det, pos_err: float)
     if spinning:
         wz = float(np.clip(wz, -float(base_cfg.max_spin_rate), float(base_cfg.max_spin_rate)))
         vx = 0.0
+    raw = last_step["raw"]
+    used = last_step["used"]
+    raw_np = None if raw is None else raw[0].detach().cpu().numpy()
+    used_np = None if used is None else used[0].detach().cpu().numpy()
+    wheel_sign = torch.as_tensor(base_cfg.wheel_sign, device=u.device, dtype=torch.float32)
+    wheel_actual = robot.data.joint_vel[0, base_term._wheel_ids]
+    wheel_target = base_term._wheel_target[0]
     yaw_records.append({
         "phase": phase,
         "steps_since_reset": int(steps_now),
         "sim_time_s": float(getattr(u.sim, "current_time", steps_now * u.step_dt)),
-        "upper_cmd_vx_wz": [float(v) for v in vel.vel_command_b[0].detach().cpu().numpy()[:2]],
+        "target_marked_at": target_marked,
+        "upper_cmd_vx_wz": [float(upper[0]), float(upper[2])],
+        "upper_cmd_vy": float(upper[1]),
         "upper_cmd_standing": bool(vel.is_standing_env[0].item()),
-        "action_base_raw": [float(action_tensor[0, 0]), float(action_tensor[0, 1])],
+        "filter_enabled": deploy_filter is not None,
+        "filter_effective_vx_wz": [filter_state["vx"], filter_state["wz"]],
+        "action_base_raw": None if raw_np is None else [float(raw_np[0]), float(raw_np[1])],
+        "action_base_filtered": None if used_np is None else [float(used_np[0]), float(used_np[1])],
+        "arm_actions_identical_before_after_filter": (
+            None if raw_np is None or used_np is None else bool(np.allclose(raw_np[2:], used_np[2:], atol=0.0))
+        ),
         "term_command_vx_wz": [float(cmd[0]), float(cmd[1])],
         "term_command_after_spin": [float(vx), float(wz)],
         "wz_zeroed": bool(wz_state["suppress"]),
         "steering_target": [float(v) for v in base_term._steering_target[0].detach().cpu().numpy()],
-        "wheel_target": [float(v) for v in base_term._wheel_target[0].detach().cpu().numpy()],
+        "wheel_target": [float(v) for v in wheel_target.detach().cpu().numpy()],
+        "wheel_target_signed": [float(v) for v in (wheel_target * wheel_sign).detach().cpu().numpy()],
         "steering_actual": [float(v) for v in robot.data.joint_pos[0, base_term._steering_ids].detach().cpu().numpy()],
-        "wheel_actual": [float(v) for v in robot.data.joint_vel[0, base_term._wheel_ids].detach().cpu().numpy()],
+        "wheel_actual": [float(v) for v in wheel_actual.detach().cpu().numpy()],
+        "wheel_actual_signed": [float(v) for v in (wheel_actual * wheel_sign).detach().cpu().numpy()],
+        "base_pos_w": [float(v) for v in bp],
         "base_yaw_deg": yaw,
-        "base_yaw_rate_dps": float(ang[0].item() * 180.0 / math.pi),
+        "base_yaw_rate_dps": yaw_rate_dps,
         "ee_pos_err_m": float(pos_err),
         "u": det.get("u"),
         "v": det.get("v"),
@@ -674,13 +806,28 @@ for name in SELECTED:
     arrival_step = None
     steps = 0
     marker_replaces = 0
+    wz_state["suppress"] = False          # do not leak the post-arrival switch across views
+    marker_registered_world = None
 
     yaw_records_allowed[0] = bool(args.detail_view) and name == args.detail_view and args.yaw_log
 
+    # Reset state of this view, recorded before any step, so two runs can be shown to start from
+    # the same place even though their trajectories diverge immediately.
+    _init_bp, _init_bq = base_pose()
+    view_initial_state = {
+        "base_pos_w": [float(v) for v in _init_bp],
+        "base_quat_w": [float(v) for v in _init_bq],
+        "joint_pos_digest": hashlib.sha256(
+            robot.data.joint_pos[0].detach().cpu().numpy().round(6).tobytes()
+        ).hexdigest(),
+        "tcp_pos_b": [
+            float(v) for v in tcp_pose_b(robot, anchor_id, base_id)[0][0].detach().cpu().numpy()
+        ],
+    }
+
+    target_mark = ""
     for _warm in range(WARMUP_STEPS):
-        with torch.no_grad():
-            action = policy(obs)
-            obs, _rew, _done, _extra = wrapper.step(action)
+        obs = policy_step(obs)
         steps += 1
         if _warm == 0:
             # The first step after reset re-applies each extra asset's init_state, so a marker
@@ -689,27 +836,34 @@ for name in SELECTED:
             # is what "observe a fixed object" means, and any base drift then shows up as a pixel
             # offset instead of being hidden.
             base_pos, base_quat = base_pose()
-            expected_marker_world = base_pos + quat_rotate(base_quat, np.array(geom["marker_pos_b"]))
+            if fixed_marker_world is not None:
+                expected_marker_world = np.array(fixed_marker_world, dtype=float)
+                target_mark = "reused-from-file"
+            else:
+                expected_marker_world = base_pos + quat_rotate(base_quat, np.array(geom["marker_pos_b"]))
+                target_mark = "registered-from-chassis"
             place_markers(name)
+            marker_registered_world = np.array(expected_marker_world, dtype=float)
+            print(f"[view {name}] target {target_mark} at {np.round(marker_registered_world, 4).tolist()}",
+                  flush=True)
         if yaw_records_allowed[0]:
             tcp_pos_now, _ = tcp_pose_b(robot, anchor_id, base_id)
             record_chain(
-                "warmup", steps, action,
+                "warmup", steps,
                 detect(read_frame(), geom["marker_color"]),
                 float(torch.linalg.norm(tcp_pos_now[0] - torch.tensor(geom["tcp_pos_b"], device=u.device)).item()),
+                target_mark,
             )
 
     while steps < WARMUP_STEPS + ARRIVAL_TIMEOUT:
-        with torch.no_grad():
-            action = policy(obs)
-            obs, _rew, _done, _extra = wrapper.step(action)
+        obs = policy_step(obs)
         steps += 1
         tcp_pos, tcp_quat = tcp_pose_b(robot, anchor_id, base_id)
         pos_err = float(torch.linalg.norm(tcp_pos[0] - torch.tensor(geom["tcp_pos_b"], device=u.device)).item())
         q_cur = tcp_quat[0].detach().cpu().numpy()
         ori_err = 2.0 * math.acos(min(1.0, abs(float(np.dot(q_cur, np.array(geom["tcp_quat_b"]))))))
         if yaw_records_allowed[0]:
-            record_chain("arrival", steps, action, detect(read_frame(), geom["marker_color"]), pos_err)
+            record_chain("arrival", steps, detect(read_frame(), geom["marker_color"]), pos_err, target_mark)
         if pos_err <= POS_TOL and ori_err <= ORI_TOL:
             arrival_step = steps
             break
@@ -732,9 +886,7 @@ for name in SELECTED:
         print(f"[view {name}] wz suppressed from the first hold step", flush=True)
 
     for hold_idx in range(HOLD_STEPS if arrival_step is not None else 0):
-        with torch.no_grad():
-            action = policy(obs)
-            obs, _rew, _done, _extra = wrapper.step(action)
+        obs = policy_step(obs)
         steps += 1
         frame = read_frame()
         det = detect(frame, geom["marker_color"])
@@ -745,7 +897,7 @@ for name in SELECTED:
         cam_pos_b, cam_quat_b, cam_pos_w = camera_pose_b()
         axis_err = axis_angle_deg(cam_quat_b, np.array(geom["expected_camera_quat_b"]))
         if yaw_records_allowed[0]:
-            record_chain("hold", steps, action, det, pos_err)
+            record_chain("hold", steps, det, pos_err, target_mark)
         if hold_idx == 0 and args.marker_mode == "world":
             drift = float(np.linalg.norm(marker_world(name) - expected_marker_world))
             if drift > 1e-3:
@@ -849,6 +1001,9 @@ for name in SELECTED:
         "expected_camera_pos_world_at_reset": expected_cam_world.tolist(),
         "expected_marker_pos_world_at_reset": expected_marker_world.tolist(),
         "marker_pos_world_at_last_hold": marker_world(name).tolist(),
+        "marker_registered_world": None if marker_registered_world is None else marker_registered_world.tolist(),
+        "marker_registration": "reused-from-file" if fixed_marker_world is not None else "registered-from-chassis",
+        "initial_state": view_initial_state,
         "marker_replaces_in_hold": marker_replaces,
         "arrival_step": arrival_step,
         "arrived": arrival_step is not None,

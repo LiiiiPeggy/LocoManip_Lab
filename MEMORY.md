@@ -806,3 +806,23 @@ gripper base and the lidar are **not closed**, so their containment is unknown r
   `d455_offset_decomposition.json`. The analyzer now emits null plus `yaw_available: false`.
   Any A1 yaw statement must come from the detailed re-run (`--detail-view`), which records the
   chassis quaternion per frame.
+- **The deployment zero-velocity filter removes the D455 top-view slide (2026-11-21).** Wired in
+  the same order as `ranger_cr10_deploy.py` (deadband command -> policy observes the deadbanded
+  value -> `filter_action` -> sim step), it takes the first-second image move from 46.26 to
+  9.58 px and the first-second chassis yaw from -1.689 to -0.002 deg, with all 60 hold steps
+  sending wz = 0 to the base controller while the raw policy action peaks at 0.121. All three
+  windows then pass the original criteria (1 s 15.4 px mean, std 1.42/3.18; 6 s 7.7 with
+  3.41/3.46), and EE tracking is unchanged. The remaining limiter is the entry aiming offset
+  (16.2 px), not drift.
+- **With wz locked to zero, one wheel still reads ~2.4 rad/s (2026-11-21).** The wheel and
+  steering *targets* are exactly 0.0 and the six arm actions are bit-identical before and after
+  filtering, yet the chassis translates ~20 mm over the hold (yaw only -0.34 deg) and one wheel's
+  measured speed reaches 2.4 rad/s while the other three stay near 0.02. This is a wheel/contact
+  response, not a command leak; it was not diagnosed. Relevant only if the view must hold a fixed
+  pixel without the 16 px entry bias being acceptable.
+- **Comparing two closed-loop runs needs the same target world pose and the same reset state
+  (2026-11-21).** The A1 target is registered from the chassis pose after the first warmup step,
+  so any intervention that changes chassis motion from step 1 would move the target. Save
+  `marker_registered_world` from the baseline run and pass it with `--marker-world`; record a
+  per-view `initial_state` (base pose, joint-position digest) to prove both runs started
+  identically.
