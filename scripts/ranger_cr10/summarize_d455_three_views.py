@@ -107,7 +107,22 @@ def summarize(directory: Path, view: str) -> dict | None:
             "offset_mean_px": float(offsets.mean()) if len(offsets) else None,
             "std_u_px": float(u.std()) if len(u) > 1 else None,
             "std_v_px": float(vv.std()) if len(vv) > 1 else None,
-            "base_translation_mm": max((r["base_drift_xy_m"] for r in seg), default=0.0) * 1000.0,
+            # Two different baselines, kept apart on purpose:
+            #   * max horizontal offset of the chassis from its position at reset, within this
+            #     window (the historical ``base_drift_xy_m``, a scalar distance);
+            #   * displacement from the first hold frame of this window, only available when the
+            #     run recorded per-frame base positions.
+            "max_offset_from_reset_mm": max((r["base_drift_xy_m"] for r in seg), default=0.0) * 1000.0,
+            "max_offset_from_first_hold_mm": (
+                None if not all("base_pos_w" in r for r in seg)
+                else float(max(math.hypot(r["base_pos_w"][0] - seg[0]["base_pos_w"][0],
+                                          r["base_pos_w"][1] - seg[0]["base_pos_w"][1]) for r in seg) * 1000.0)
+            ),
+            "max_offset_from_first_hold_unavailable_reason": (
+                None if all("base_pos_w" in r for r in seg)
+                else "this run did not record per-frame base_pos_w"
+            ),
+            "yaw_change_deg": float(seg[-1]["base_yaw_deg"] - seg[0]["base_yaw_deg"]),
             "displacement_px": None if len(u) < 2 else {
                 "du": float(u[-1] - u[0]),
                 "dv": float(vv[-1] - vv[0]),
@@ -124,6 +139,17 @@ def summarize(directory: Path, view: str) -> dict | None:
         out["windows"][f"{seconds:g}s"] = w
     return out
 
+
+dt_seen = None
+for _view in ("front", "side", "top"):
+    for _group in ("off", "on"):
+        _path = RUNS[(_view, _group)] / "d455_view_results.json"
+        if _path.is_file():
+            _doc = json.loads(_path.read_text())
+            dt_seen = _doc.get("protocol", {}).get("control_dt_s")
+            break
+    if dt_seen:
+        break
 
 results = {"criteria": {"visible_ratio_min": VISIBLE_MIN_RATIO, "offset_mean_max_px": OFFSET_MAX_PX,
                         "std_max_px": STD_MAX_PX},
@@ -157,16 +183,54 @@ for view in VIEWS:
         }
     results["views"][view] = entry
 
+# -- total verdict ---------------------------------------------------------------
+# A view only counts when it is present, arrived, and every one of its three windows has the
+# full frame count. Missing data and short windows are marked explicitly rather than being
+# dropped, so a partial run can never sum to "pass".
+expected_frames = {f"{s:g}s": int(round(s / dt_seen)) for s in (1.0, 2.0, 6.0)} if dt_seen else {}
+
+
+def view_verdict(view: str) -> dict:
+    on = results["views"][view].get("on")
+    if on is None:
+        return {"present": False, "arrived": None, "windows_complete": None, "passes": False,
+                "reason": "missing ON result"}
+    windows = on["windows"]
+    missing = [w for w in ("1s", "2s", "6s") if w not in windows]
+    short = [w for w in ("1s", "2s", "6s")
+             if w in windows and expected_frames and windows[w]["frames"] < expected_frames[w]]
+    verdict = {
+        "present": True,
+        "arrived": bool(on["arrived"]),
+        "windows_complete": not missing and not short,
+        "missing_windows": missing,
+        "short_windows": short,
+        "expected_frames": expected_frames,
+        "window_passes": {w: windows[w]["passes"] for w in ("1s", "2s", "6s") if w in windows},
+    }
+    verdict["passes"] = bool(verdict["arrived"] and verdict["windows_complete"]
+                             and all(verdict["window_passes"].values())
+                             and len(verdict["window_passes"]) == 3)
+    reasons = []
+    if not verdict["arrived"]:
+        reasons.append("did not arrive")
+    if missing:
+        reasons.append(f"missing windows {missing}")
+    if short:
+        reasons.append(f"short windows {short}")
+    if any(not p for p in verdict["window_passes"].values()):
+        reasons.append("window criteria failed: "
+                       + ",".join(w for w, p in verdict["window_passes"].items() if not p))
+    verdict["reason"] = "; ".join(reasons) if reasons else "all windows present, complete and passing"
+    return verdict
+
+
 results["summary"] = {
-    "on_all_windows_pass": {
-        view: all(w["passes"] for w in results["views"][view]["on"]["windows"].values())
-        if results["views"][view].get("on") else None
-        for view in VIEWS
-    },
+    "per_view": {view: view_verdict(view) for view in VIEWS},
+    "all_three_views_pass": all(view_verdict(view)["passes"] for view in VIEWS),
+    "note": "passing requires all three views to be present, arrived, with complete 1/2/6 s "
+            "window frames and all per-window criteria met",
 }
-results["summary"]["all_three_views_pass"] = all(
-    value for value in results["summary"]["on_all_windows_pass"].values() if value is not None
-)
 Path(args.out).write_text(json.dumps(results, indent=1))
 
 print(f"{'view':6} {'grp':4} {'arr':>4} {'entry':>7} | {'1s vis':>8} {'mean':>6} {'std_u':>6} {'std_v':>6} {'move':>6} "
@@ -185,6 +249,10 @@ for view in VIEWS:
               f"{w6['displacement_px']['magnitude']:6.1f} {str(w6['passes']):>5}")
     p = results["views"][view]["pairing"]
     print(f"{'':6} pairing: {p}")
-print("\non, all windows:", results["summary"]["on_all_windows_pass"])
+print()
+for view in VIEWS:
+    v = results["summary"]["per_view"][view]
+    print(f"verdict {view:6}: present={v['present']} arrived={v['arrived']} "
+          f"complete={v['windows_complete']} passes={v['passes']} -- {v['reason']}")
 print("all three views pass:", results["summary"]["all_three_views_pass"])
 print(f"wrote {args.out}")

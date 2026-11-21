@@ -838,3 +838,14 @@ gripper base and the lidar are **not closed**, so their containment is unknown r
   criteria (mean <= 20 px, std <= 5 px): `front` 9.0/6.9/5.5, `side` 17.2/18.7/19.8, `top`
   15.4/12.8/7.7. `side` clears the six-second mean by only 0.2 px and drifts outward slowly, so a
   future change that lengthens the hold or perturbs the chassis should re-check `side` first.
+- **The continuous drive/park/observe flow exists and its one failing view is `top` (2026-11-22).**
+  `validate_d455_continuous.py` (plan mode + full mode, one reset, episode counter held at zero so
+  the 200-step timeout cannot fire) runs settle/drive/turn/park then front/side/top. Front and side
+  pass the 1/2/6 s criteria; top fails the 6 s mean by 0.7 px because the planned parking pose is
+  9.5 mm / 0.75 deg off, and the plan models yaw only, while the chassis actually settles with
+  0.70 deg of roll. Before blaming the arm or the target transform, note that projection matches
+  detection within 1.5 px and the chassis moves <3 mm during the holds.
+- **`d455_eval_common.py` is now the single source of the D455 camera model, view geometry,
+  detection and criteria (2026-11-22).** Both entry points import it; the refactor was verified by
+  re-running the single-view smoke and matching the pre-refactor first-frame `du/dv` bit for bit
+  (3.172441). Edit the shared module rather than either script when changing geometry.

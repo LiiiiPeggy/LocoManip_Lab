@@ -1227,3 +1227,23 @@ Recorded because it misleads edits; neither item changes runtime behavior.
    rather than on centring; the 9.6-16.2 px entry offsets are aiming errors, not drift; 24-33 mm
    of chassis translation remains. Evidence: `outputs/stage413/b/d455_fs_{off,on}/`,
    `d455_three_views_summary.json`; plan §48.11.
+
+   **Continuous drive -> park -> observe run: completed, `top` misses by 0.7 px (2026-11-22).** New
+   entry `validate_d455_continuous.py` resets once and runs settle -> drive (vx 0.15 m/s, 1.0 s) ->
+   turn (wz 0.25 rad/s, 0.6 s) -> park -> front/side/top with 6 s holds, 230 steps in total, no
+   termination and no contact events. The plan mode fixes the world targets from the planned
+   parking pose before the evaluated run; the actual park lands 9.5 mm / 0.75 deg away (including a
+   0.70 deg roll the pure-yaw plan did not model). The deployment filter behaves per phase: drive
+   and turn commands pass the deadband unchanged (0.150/0.250), park and observe are locked to
+   zero on every step, and the six arm actions are bit-identical before and after ``filter_action``
+   throughout. All three views arrive (steps 40/105/170) and stay visible 60/60; front passes with
+   12.7/11.6/10.5 px and side with 7.6/7.7/7.7, but top reads 19.1/19.4/**20.7** px, so the 6 s
+   mean exceeds the 20 px criterion by 0.7 px. The chassis moves at most 2.7 mm during any hold and
+   the projection matches detection within 1.5 px, so this is a static aim offset (parking error
+   plus arm steady state), not sliding: top moves 10.8 px in its first second and only 2.9 px more
+   over the remaining 5 s. The single next direction is to close the parking loop (9.5 mm /
+   0.75 deg down to ~2 mm / 0.1 deg) with everything else unchanged. Offline, the three-view
+   summary now requires all three views present, arrived and with complete 1/2/6 s windows, and the
+   translation metric is renamed `max_offset_from_reset_mm` with a separate
+   `max_offset_from_first_hold_mm`. Evidence: `outputs/stage413/b/d455_cont_{plan,full}/`; plan
+   §48.12.
